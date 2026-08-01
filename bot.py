@@ -57,6 +57,9 @@ class BleedClone(commands.Bot):
             "cogs.tickets",
             "cogs.giveaways",
             "cogs.voicemaster",
+            "cogs.antinuke",
+            "cogs.antiraid",
+            "cogs.filter",
             "cogs.core",
         ):
             try:
