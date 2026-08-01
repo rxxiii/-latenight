@@ -121,6 +121,51 @@ CREATE TABLE IF NOT EXISTS voicemaster_channels (
     guild_id INTEGER,
     owner_id INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS antinuke_config (
+    guild_id INTEGER PRIMARY KEY,
+    enabled INTEGER DEFAULT 0,
+    vanity INTEGER DEFAULT 1,
+    botadd INTEGER DEFAULT 1,
+    ban INTEGER DEFAULT 1,
+    kick INTEGER DEFAULT 1,
+    role INTEGER DEFAULT 1,
+    log_channel_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS antinuke_whitelist (
+    guild_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS antiraid_config (
+    guild_id INTEGER PRIMARY KEY,
+    enabled INTEGER DEFAULT 0,
+    massjoin_count INTEGER DEFAULT 10,
+    massjoin_seconds INTEGER DEFAULT 10,
+    min_account_age_days INTEGER DEFAULT 0,
+    raid_mode INTEGER DEFAULT 0,
+    log_channel_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS antiraid_whitelist (
+    guild_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS filter_words (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    word TEXT
+);
+
+CREATE TABLE IF NOT EXISTS filter_config (
+    guild_id INTEGER PRIMARY KEY,
+    invites INTEGER DEFAULT 0,
+    spam INTEGER DEFAULT 0
+);
 """
 
 
@@ -399,6 +444,164 @@ class Database:
             "SELECT * FROM voicemaster_channels WHERE channel_id = ?", (channel_id,)
         )
         return await cur.fetchone()
+
+    # ---------- antinuke ----------
+
+    async def get_antinuke_config(self, guild_id: int):
+        cur = await self.conn.execute(
+            "SELECT * FROM antinuke_config WHERE guild_id = ?", (guild_id,)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            await self.conn.execute(
+                "INSERT INTO antinuke_config (guild_id) VALUES (?)", (guild_id,)
+            )
+            await self.conn.commit()
+            cur = await self.conn.execute(
+                "SELECT * FROM antinuke_config WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cur.fetchone()
+        return row
+
+    async def set_antinuke_config(self, guild_id: int, **fields):
+        await self.get_antinuke_config(guild_id)
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [guild_id]
+        await self.conn.execute(
+            f"UPDATE antinuke_config SET {cols} WHERE guild_id = ?", values
+        )
+        await self.conn.commit()
+
+    async def antinuke_whitelist_add(self, guild_id, user_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO antinuke_whitelist (guild_id, user_id) VALUES (?, ?)",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def antinuke_whitelist_remove(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM antinuke_whitelist WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def antinuke_whitelist_list(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT user_id FROM antinuke_whitelist WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["user_id"] for r in rows]
+
+    async def antinuke_is_whitelisted(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM antinuke_whitelist WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    # ---------- antiraid ----------
+
+    async def get_antiraid_config(self, guild_id: int):
+        cur = await self.conn.execute(
+            "SELECT * FROM antiraid_config WHERE guild_id = ?", (guild_id,)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            await self.conn.execute(
+                "INSERT INTO antiraid_config (guild_id) VALUES (?)", (guild_id,)
+            )
+            await self.conn.commit()
+            cur = await self.conn.execute(
+                "SELECT * FROM antiraid_config WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cur.fetchone()
+        return row
+
+    async def set_antiraid_config(self, guild_id: int, **fields):
+        await self.get_antiraid_config(guild_id)
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [guild_id]
+        await self.conn.execute(
+            f"UPDATE antiraid_config SET {cols} WHERE guild_id = ?", values
+        )
+        await self.conn.commit()
+
+    async def antiraid_whitelist_add(self, guild_id, user_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO antiraid_whitelist (guild_id, user_id) VALUES (?, ?)",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def antiraid_whitelist_remove(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM antiraid_whitelist WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def antiraid_whitelist_list(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT user_id FROM antiraid_whitelist WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["user_id"] for r in rows]
+
+    async def antiraid_is_whitelisted(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM antiraid_whitelist WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    # ---------- filter ----------
+
+    async def get_filter_config(self, guild_id: int):
+        cur = await self.conn.execute(
+            "SELECT * FROM filter_config WHERE guild_id = ?", (guild_id,)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            await self.conn.execute(
+                "INSERT INTO filter_config (guild_id) VALUES (?)", (guild_id,)
+            )
+            await self.conn.commit()
+            cur = await self.conn.execute(
+                "SELECT * FROM filter_config WHERE guild_id = ?", (guild_id,)
+            )
+            row = await cur.fetchone()
+        return row
+
+    async def set_filter_config(self, guild_id: int, **fields):
+        await self.get_filter_config(guild_id)
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [guild_id]
+        await self.conn.execute(
+            f"UPDATE filter_config SET {cols} WHERE guild_id = ?", values
+        )
+        await self.conn.commit()
+
+    async def add_filter_word(self, guild_id, word):
+        await self.conn.execute(
+            "INSERT INTO filter_words (guild_id, word) VALUES (?, ?)",
+            (guild_id, word.lower()),
+        )
+        await self.conn.commit()
+
+    async def remove_filter_word(self, guild_id, word):
+        await self.conn.execute(
+            "DELETE FROM filter_words WHERE guild_id = ? AND word = ?",
+            (guild_id, word.lower()),
+        )
+        await self.conn.commit()
+
+    async def get_filter_words(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT word FROM filter_words WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["word"] for r in rows]
 
 
 db = Database()
