@@ -52,6 +52,7 @@ class BleedClone(commands.Bot):
 
         for extension in (
             "cogs.moderation",
+            "cogs.moderation_extended",
             "cogs.welcome",
             "cogs.roles",
             "cogs.tickets",

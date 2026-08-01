@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS guild_config (
     starboard_channel_id INTEGER,
     starboard_threshold INTEGER DEFAULT 3,
     voicemaster_category_id INTEGER,
-    voicemaster_join_channel_id INTEGER
+    voicemaster_join_channel_id INTEGER,
+    jail_role_id INTEGER,
+    jail_channel_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS warnings (
@@ -166,6 +168,33 @@ CREATE TABLE IF NOT EXISTS filter_config (
     invites INTEGER DEFAULT 0,
     spam INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS staff_roles (
+    guild_id INTEGER,
+    role_id INTEGER,
+    PRIMARY KEY (guild_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS temp_bans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    user_id INTEGER,
+    unban_time INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hardbans (
+    guild_id INTEGER,
+    user_id INTEGER,
+    reason TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS jailed_members (
+    guild_id INTEGER,
+    user_id INTEGER,
+    previous_roles TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 
@@ -179,6 +208,22 @@ class Database:
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
         await self.conn.commit()
+        await self._migrate()
+
+    async def _migrate(self):
+        """Add columns to tables that already existed before this field was
+        introduced. CREATE TABLE IF NOT EXISTS only creates missing tables,
+        it never alters existing ones, so new columns need to be added here."""
+        migrations = [
+            ("guild_config", "jail_role_id", "INTEGER"),
+            ("guild_config", "jail_channel_id", "INTEGER"),
+        ]
+        for table, column, coltype in migrations:
+            try:
+                await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+                await self.conn.commit()
+            except aiosqlite.OperationalError:
+                pass  # column already exists
 
     # ---------- guild config ----------
 
@@ -602,6 +647,103 @@ class Database:
         )
         rows = await cur.fetchall()
         return [r["word"] for r in rows]
+
+    # ---------- staff roles ----------
+
+    async def add_staff_role(self, guild_id, role_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO staff_roles (guild_id, role_id) VALUES (?, ?)",
+            (guild_id, role_id),
+        )
+        await self.conn.commit()
+
+    async def remove_staff_role(self, guild_id, role_id):
+        await self.conn.execute(
+            "DELETE FROM staff_roles WHERE guild_id = ? AND role_id = ?",
+            (guild_id, role_id),
+        )
+        await self.conn.commit()
+
+    async def list_staff_roles(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT role_id FROM staff_roles WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["role_id"] for r in rows]
+
+    async def is_staff_member(self, guild_id, member) -> bool:
+        """True if this member has manage_guild perms, is admin, or holds a bound staff role."""
+        if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
+            return True
+        staff_roles = await self.list_staff_roles(guild_id)
+        return any(r.id in staff_roles for r in member.roles)
+
+    # ---------- temp bans ----------
+
+    async def add_temp_ban(self, guild_id, user_id, unban_time):
+        await self.conn.execute(
+            "INSERT INTO temp_bans (guild_id, user_id, unban_time) VALUES (?, ?, ?)",
+            (guild_id, user_id, unban_time),
+        )
+        await self.conn.commit()
+
+    async def get_expired_temp_bans(self, now: int):
+        cur = await self.conn.execute(
+            "SELECT * FROM temp_bans WHERE unban_time <= ?", (now,)
+        )
+        return await cur.fetchall()
+
+    async def remove_temp_ban(self, temp_ban_id):
+        await self.conn.execute(
+            "DELETE FROM temp_bans WHERE id = ?", (temp_ban_id,)
+        )
+        await self.conn.commit()
+
+    # ---------- hardbans ----------
+
+    async def add_hardban(self, guild_id, user_id, reason):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO hardbans (guild_id, user_id, reason) VALUES (?, ?, ?)",
+            (guild_id, user_id, reason),
+        )
+        await self.conn.commit()
+
+    async def remove_hardban(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM hardbans WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def is_hardbanned(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM hardbans WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    # ---------- jail ----------
+
+    async def set_jailed(self, guild_id, user_id, previous_roles_csv):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO jailed_members (guild_id, user_id, previous_roles) VALUES (?, ?, ?)",
+            (guild_id, user_id, previous_roles_csv),
+        )
+        await self.conn.commit()
+
+    async def get_jailed(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM jailed_members WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return await cur.fetchone()
+
+    async def remove_jailed(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM jailed_members WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
 
 
 db = Database()
