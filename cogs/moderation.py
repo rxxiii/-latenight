@@ -43,6 +43,10 @@ class Moderation(commands.Cog):
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(user_id="The ID of the user to unban")
     async def unban(self, ctx: commands.Context, user_id: str):
+        if await db.is_hardbanned(ctx.guild.id, int(user_id)):
+            return await ctx.send(
+                "This user is hardbanned. Use `,hardban remove` first if you're sure you want to unban them."
+            )
         user = discord.Object(id=int(user_id))
         await ctx.guild.unban(user)
         await ctx.send(f"✅ Unbanned user `{user_id}`.")
@@ -59,7 +63,7 @@ class Moderation(commands.Cog):
 
     # ---------- mute (timeout) ----------
 
-    @commands.hybrid_command(name="mute", description="Timeout a member for a duration (e.g. 10m, 2h, 1d).")
+    @commands.hybrid_command(name="timeout", aliases=["mute"], description="Timeout a member for a duration (e.g. 10m, 2h, 1d).")
     @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     @app_commands.describe(member="Member to mute", duration="e.g. 10m, 2h, 1d", reason="Reason for the mute")
@@ -167,4 +171,3 @@ class Moderation(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Moderation(bot))
-
