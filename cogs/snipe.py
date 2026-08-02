@@ -83,7 +83,7 @@ class Snipe(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @app_commands.describe(amount="How many recent messages to scan (default 50, max 200)")
-    async def bot_clear(self, ctx: commands.Context, amount: commands.Range[int, 1, 200] = 50):
+    async def clear_bot_messages(self, ctx: commands.Context, amount: commands.Range[int, 1, 200] = 50):
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
             deleted = await ctx.channel.purge(limit=amount, check=lambda m: m.author.bot)
