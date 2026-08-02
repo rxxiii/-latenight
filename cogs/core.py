@@ -86,18 +86,17 @@ class Core(commands.Cog):
                 reference = resolved
 
         if ctx.interaction:
-            if reference is not None or channel.id != ctx.channel.id:
-                # A reply or a different target channel needs a real
-                # channel.send() call (interaction responses can't do this).
-                try:
-                    await channel.send(message, reference=reference)
-                except discord.Forbidden:
-                    return await ctx.send("I don't have access to send messages there.", ephemeral=True)
-                await ctx.send("Sent.", ephemeral=True)
-            else:
-                # Respond through the interaction itself — this works even in
-                # DMs/group chats where the bot has no direct channel access.
-                await ctx.send(message)
+            await ctx.interaction.response.defer(ephemeral=True)
+            try:
+                # Sending directly (rather than as the interaction's reply)
+                # avoids Discord's "X used /say" label on the message.
+                await channel.send(message, reference=reference)
+                await ctx.interaction.followup.send("Sent.", ephemeral=True)
+            except discord.Forbidden:
+                # No direct channel access (e.g. a group chat via user-install)
+                # — fall back to a normal interaction response. This will show
+                # the "used /say" label, but it's the only way it can work here.
+                await ctx.interaction.followup.send(message)
         else:
             try:
                 await ctx.message.delete()
