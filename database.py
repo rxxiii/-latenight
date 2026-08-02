@@ -275,6 +275,27 @@ CREATE TABLE IF NOT EXISTS fake_permissions (
     permission TEXT,
     PRIMARY KEY (guild_id, role_id, permission)
 );
+
+CREATE TABLE IF NOT EXISTS welcome_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    channel_id INTEGER,
+    message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS goodbye_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    channel_id INTEGER,
+    message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS boost_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    channel_id INTEGER,
+    message TEXT
+);
 """
 
 
@@ -1154,6 +1175,33 @@ class Database:
     async def reset_fake_permissions(self, guild_id):
         await self.conn.execute("DELETE FROM fake_permissions WHERE guild_id = ?", (guild_id,))
         await self.conn.commit()
+
+    # ---------- welcome / goodbye / boost multi-messages ----------
+    # table is always one of a fixed set of literals we control internally
+    # (welcome_messages / goodbye_messages / boost_messages), never user
+    # input, so building the query with an f-string here is safe.
+
+    async def add_event_message(self, table, guild_id, channel_id, message):
+        await self.conn.execute(
+            f"INSERT INTO {table} (guild_id, channel_id, message) VALUES (?, ?, ?)",
+            (guild_id, channel_id, message),
+        )
+        await self.conn.commit()
+        cur = await self.conn.execute("SELECT last_insert_rowid() AS id")
+        row = await cur.fetchone()
+        return row["id"]
+
+    async def remove_event_message(self, table, message_row_id):
+        await self.conn.execute(f"DELETE FROM {table} WHERE id = ?", (message_row_id,))
+        await self.conn.commit()
+
+    async def get_event_message(self, table, message_row_id):
+        cur = await self.conn.execute(f"SELECT * FROM {table} WHERE id = ?", (message_row_id,))
+        return await cur.fetchone()
+
+    async def list_event_messages(self, table, guild_id):
+        cur = await self.conn.execute(f"SELECT * FROM {table} WHERE guild_id = ?", (guild_id,))
+        return await cur.fetchall()
 
 
 db = Database()
