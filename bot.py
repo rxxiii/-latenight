@@ -68,6 +68,7 @@ class BleedClone(commands.Bot):
             "cogs.logging_events",
             "cogs.fakeperms",
             "cogs.snipe",
+            "cogs.blacklist",
             "cogs.core",
         ):
             try:
@@ -105,6 +106,9 @@ class BleedClone(commands.Bot):
         # completely silently — the user just sees nothing happen.
         if isinstance(error, commands.CommandNotFound):
             return
+        from cogs.blacklist import Blacklisted
+        if isinstance(error, Blacklisted):
+            return await ctx.send(f"You're blacklisted from using this bot. Reason: {error}")
         if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
             return await ctx.send("You don't have permission to use this command.")
         if isinstance(error, commands.BotMissingPermissions):

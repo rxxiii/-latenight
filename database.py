@@ -296,6 +296,12 @@ CREATE TABLE IF NOT EXISTS boost_messages (
     channel_id INTEGER,
     message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS blacklist (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    added_at INTEGER
+);
 """
 
 
@@ -1201,6 +1207,27 @@ class Database:
 
     async def list_event_messages(self, table, guild_id):
         cur = await self.conn.execute(f"SELECT * FROM {table} WHERE guild_id = ?", (guild_id,))
+        return await cur.fetchall()
+
+    # ---------- blacklist ----------
+
+    async def blacklist_add(self, user_id, reason, added_at):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO blacklist (user_id, reason, added_at) VALUES (?, ?, ?)",
+            (user_id, reason, added_at),
+        )
+        await self.conn.commit()
+
+    async def blacklist_remove(self, user_id):
+        await self.conn.execute("DELETE FROM blacklist WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+
+    async def blacklist_check(self, user_id):
+        cur = await self.conn.execute("SELECT * FROM blacklist WHERE user_id = ?", (user_id,))
+        return await cur.fetchone()
+
+    async def blacklist_list(self):
+        cur = await self.conn.execute("SELECT * FROM blacklist")
         return await cur.fetchall()
 
 
