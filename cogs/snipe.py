@@ -5,6 +5,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from database import db
+
 MAX_SNIPES_PER_CHANNEL = 20
 
 
@@ -79,18 +81,31 @@ class Snipe(commands.Cog):
         embed.set_footer(text=f"{index}/{len(history)} removed reactions")
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="bc", description="Bulk delete recent bot messages in this channel.")
+    @commands.hybrid_command(name="cs", description="Clear this channel's snipe and reaction-snipe history.")
+    @commands.has_permissions(manage_messages=True)
+    async def clear_snipes(self, ctx: commands.Context):
+        self.deleted_messages.pop(ctx.channel.id, None)
+        self.removed_reactions.pop(ctx.channel.id, None)
+        await ctx.send("🧹 Snipe history cleared for this channel.")
+
+    @commands.hybrid_command(name="bc", description="Bulk delete recent bot messages and command messages in this channel.")
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @app_commands.describe(amount="How many recent messages to scan (default 50, max 200)")
     async def clear_bot_messages(self, ctx: commands.Context, amount: commands.Range[int, 1, 200] = 50):
+        row = await db.get_guild_config(ctx.guild.id)
+        prefix = row["prefix"]
+
+        def is_bot_or_command(m: discord.Message) -> bool:
+            return m.author.bot or m.content.startswith(prefix)
+
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
-            deleted = await ctx.channel.purge(limit=amount, check=lambda m: m.author.bot)
-            await ctx.interaction.followup.send(f"🧹 Deleted {len(deleted)} bot message(s).", ephemeral=True)
+            deleted = await ctx.channel.purge(limit=amount, check=is_bot_or_command)
+            await ctx.interaction.followup.send(f"🧹 Deleted {len(deleted)} message(s).", ephemeral=True)
         else:
-            deleted = await ctx.channel.purge(limit=amount + 1, check=lambda m: m.author.bot or m.id == ctx.message.id)
-            msg = await ctx.send(f"🧹 Deleted {len(deleted) - 1} bot message(s).")
+            deleted = await ctx.channel.purge(limit=amount + 1, check=lambda m: is_bot_or_command(m) or m.id == ctx.message.id)
+            msg = await ctx.send(f"🧹 Deleted {len(deleted) - 1} message(s).")
             await msg.delete(delay=4)
 
 

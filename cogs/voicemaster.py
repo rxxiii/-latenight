@@ -127,7 +127,7 @@ class VoiceMaster(commands.Cog):
 
     # ---------- command group ----------
 
-    @commands.hybrid_group(name="voicemaster", aliases=["vm"], invoke_without_command=True)
+    @commands.hybrid_group(name="voicemaster", aliases=["vm", "vc"], invoke_without_command=True)
     async def voicemaster(self, ctx: commands.Context):
         await ctx.send_help(ctx.command)
 

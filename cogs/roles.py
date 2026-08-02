@@ -149,6 +149,31 @@ class Roles(commands.Cog):
         await db.remove_button_roles_for_message(int(message_id))
         await ctx.send("Removed all button roles from that message.")
 
+    @commands.hybrid_command(name="buttonrole-remove", description="Remove a single button role from a message.")
+    @commands.has_permissions(manage_roles=True)
+    @app_commands.describe(message_id="ID of the message the button is on", role="Role tied to the button you want to remove")
+    async def buttonrole_remove(self, ctx: commands.Context, message_id: str, role: discord.Role):
+        rows = await db.get_button_roles_for_guild(ctx.guild.id)
+        target = next((r for r in rows if str(r["message_id"]) == message_id and r["role_id"] == role.id), None)
+        if target is None:
+            return await ctx.send("Couldn't find that button role.")
+
+        await db.remove_button_role(target["custom_id"])
+
+        remaining = [r for r in await db.get_button_roles_for_guild(ctx.guild.id) if str(r["message_id"]) == message_id]
+        channel = ctx.guild.get_channel(target["channel_id"])
+        if channel:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                if remaining:
+                    new_view = RoleButtonView([(r["label"], r["custom_id"]) for r in remaining])
+                    await message.edit(view=new_view)
+                else:
+                    await message.edit(view=None)
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        await ctx.send(f"Removed the {role.mention} button.")
+
     @commands.hybrid_command(name="buttonrole-reset", description="Wipe every button role configured in this server.")
     @commands.has_permissions(administrator=True)
     async def buttonrole_reset(self, ctx: commands.Context):
