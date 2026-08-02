@@ -26,6 +26,21 @@ class Core(commands.Cog):
         await db.set_guild_config(ctx.guild.id, prefix=new_prefix)
         await ctx.send(f"Prefix updated to `{new_prefix}`.")
 
+    @commands.hybrid_command(name="say", description="Make the bot say something.")
+    @commands.has_permissions(manage_messages=True)
+    @app_commands.describe(message="What the bot should say", channel="Channel to send it in (defaults to here)")
+    async def say(self, ctx: commands.Context, message: str, channel: discord.TextChannel = None):
+        channel = channel or ctx.channel
+        if ctx.interaction:
+            await channel.send(message)
+            await ctx.send("Sent.", ephemeral=True)
+        else:
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
+            await channel.send(message)
+
     @commands.hybrid_command(name="ping", description="Check the bot's latency.")
     async def ping(self, ctx: commands.Context):
         await ctx.send(f"Pong! `{round(self.bot.latency * 1000)}ms`")
