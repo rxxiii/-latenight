@@ -30,7 +30,23 @@ CREATE TABLE IF NOT EXISTS guild_config (
     voicemaster_category_id INTEGER,
     voicemaster_join_channel_id INTEGER,
     jail_role_id INTEGER,
-    jail_channel_id INTEGER
+    jail_channel_id INTEGER,
+    voicemaster_default_name TEXT DEFAULT '{user}''s Channel',
+    voicemaster_default_bitrate INTEGER,
+    voicemaster_default_region TEXT,
+    voicemaster_join_role_id INTEGER,
+    starboard_locked INTEGER DEFAULT 0,
+    starboard_emoji TEXT DEFAULT '⭐',
+    starboard_selfstar INTEGER DEFAULT 1,
+    starboard_color TEXT,
+    starboard_timestamp INTEGER DEFAULT 1,
+    starboard_jumpurl INTEGER DEFAULT 1,
+    starboard_attachments INTEGER DEFAULT 1,
+    booster_base_role_id INTEGER,
+    booster_award_role_id INTEGER,
+    vanity_phrase TEXT,
+    vanity_message TEXT,
+    vanity_award_channel_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS warnings (
@@ -214,6 +230,51 @@ CREATE TABLE IF NOT EXISTS afk_status (
     set_at INTEGER,
     PRIMARY KEY (guild_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS starboard_ignored (
+    guild_id INTEGER,
+    channel_id INTEGER,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS booster_roles (
+    guild_id INTEGER,
+    user_id INTEGER,
+    role_id INTEGER,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS vanity_roles (
+    guild_id INTEGER,
+    role_id INTEGER,
+    PRIMARY KEY (guild_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS vanity_members (
+    guild_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS log_config (
+    guild_id INTEGER,
+    category TEXT,
+    channel_id INTEGER,
+    PRIMARY KEY (guild_id, category)
+);
+
+CREATE TABLE IF NOT EXISTS log_ignored (
+    guild_id INTEGER,
+    channel_id INTEGER,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS fake_permissions (
+    guild_id INTEGER,
+    role_id INTEGER,
+    permission TEXT,
+    PRIMARY KEY (guild_id, role_id, permission)
+);
 """
 
 
@@ -240,6 +301,22 @@ class Database:
             ("giveaways", "thumbnail_url", "TEXT"),
             ("giveaways", "image_url", "TEXT"),
             ("giveaways", "required_roles", "TEXT"),
+            ("guild_config", "voicemaster_default_name", "TEXT DEFAULT '{user}''s Channel'"),
+            ("guild_config", "voicemaster_default_bitrate", "INTEGER"),
+            ("guild_config", "voicemaster_default_region", "TEXT"),
+            ("guild_config", "voicemaster_join_role_id", "INTEGER"),
+            ("guild_config", "starboard_locked", "INTEGER DEFAULT 0"),
+            ("guild_config", "starboard_emoji", "TEXT DEFAULT '⭐'"),
+            ("guild_config", "starboard_selfstar", "INTEGER DEFAULT 1"),
+            ("guild_config", "starboard_color", "TEXT"),
+            ("guild_config", "starboard_timestamp", "INTEGER DEFAULT 1"),
+            ("guild_config", "starboard_jumpurl", "INTEGER DEFAULT 1"),
+            ("guild_config", "starboard_attachments", "INTEGER DEFAULT 1"),
+            ("guild_config", "booster_base_role_id", "INTEGER"),
+            ("guild_config", "booster_award_role_id", "INTEGER"),
+            ("guild_config", "vanity_phrase", "TEXT"),
+            ("guild_config", "vanity_message", "TEXT"),
+            ("guild_config", "vanity_award_channel_id", "INTEGER"),
         ]
         for table, column, coltype in migrations:
             try:
@@ -873,6 +950,209 @@ class Database:
             "DELETE FROM afk_status WHERE guild_id = ? AND user_id = ?",
             (guild_id, user_id),
         )
+        await self.conn.commit()
+
+    # ---------- starboard ignore ----------
+
+    async def starboard_ignore_add(self, guild_id, channel_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO starboard_ignored (guild_id, channel_id) VALUES (?, ?)",
+            (guild_id, channel_id),
+        )
+        await self.conn.commit()
+
+    async def starboard_ignore_remove(self, guild_id, channel_id):
+        await self.conn.execute(
+            "DELETE FROM starboard_ignored WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        )
+        await self.conn.commit()
+
+    async def starboard_ignore_list(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT channel_id FROM starboard_ignored WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["channel_id"] for r in rows]
+
+    async def is_starboard_ignored(self, guild_id, channel_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM starboard_ignored WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    # ---------- booster roles ----------
+
+    async def set_booster_role(self, guild_id, user_id, role_id):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO booster_roles (guild_id, user_id, role_id) VALUES (?, ?, ?)",
+            (guild_id, user_id, role_id),
+        )
+        await self.conn.commit()
+
+    async def get_booster_role(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM booster_roles WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return await cur.fetchone()
+
+    async def remove_booster_role(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM booster_roles WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def list_booster_roles(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM booster_roles WHERE guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    # ---------- vanity ----------
+
+    async def vanity_role_add(self, guild_id, role_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO vanity_roles (guild_id, role_id) VALUES (?, ?)",
+            (guild_id, role_id),
+        )
+        await self.conn.commit()
+
+    async def vanity_role_remove(self, guild_id, role_id):
+        await self.conn.execute(
+            "DELETE FROM vanity_roles WHERE guild_id = ? AND role_id = ?",
+            (guild_id, role_id),
+        )
+        await self.conn.commit()
+
+    async def vanity_role_list(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT role_id FROM vanity_roles WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["role_id"] for r in rows]
+
+    async def vanity_member_has(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM vanity_members WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    async def vanity_member_set(self, guild_id, user_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO vanity_members (guild_id, user_id) VALUES (?, ?)",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def vanity_member_clear(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM vanity_members WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    # ---------- logging ----------
+
+    async def set_log_channel(self, guild_id, category, channel_id):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO log_config (guild_id, category, channel_id) VALUES (?, ?, ?)",
+            (guild_id, category, channel_id),
+        )
+        await self.conn.commit()
+
+    async def remove_log_channel(self, guild_id, category):
+        await self.conn.execute(
+            "DELETE FROM log_config WHERE guild_id = ? AND category = ?",
+            (guild_id, category),
+        )
+        await self.conn.commit()
+
+    async def get_log_channel(self, guild_id, category):
+        cur = await self.conn.execute(
+            "SELECT channel_id FROM log_config WHERE guild_id = ? AND category = ?",
+            (guild_id, category),
+        )
+        row = await cur.fetchone()
+        return row["channel_id"] if row else None
+
+    async def list_log_channels(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM log_config WHERE guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    async def log_ignore_add(self, guild_id, channel_id):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO log_ignored (guild_id, channel_id) VALUES (?, ?)",
+            (guild_id, channel_id),
+        )
+        await self.conn.commit()
+
+    async def log_ignore_remove(self, guild_id, channel_id):
+        await self.conn.execute(
+            "DELETE FROM log_ignored WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        )
+        await self.conn.commit()
+
+    async def log_ignore_list(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT channel_id FROM log_ignored WHERE guild_id = ?", (guild_id,)
+        )
+        rows = await cur.fetchall()
+        return [r["channel_id"] for r in rows]
+
+    async def is_log_ignored(self, guild_id, channel_id):
+        cur = await self.conn.execute(
+            "SELECT 1 FROM log_ignored WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        )
+        return (await cur.fetchone()) is not None
+
+    # ---------- fake permissions ----------
+
+    async def add_fake_permission(self, guild_id, role_id, permission):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO fake_permissions (guild_id, role_id, permission) VALUES (?, ?, ?)",
+            (guild_id, role_id, permission.lower()),
+        )
+        await self.conn.commit()
+
+    async def remove_fake_permission(self, guild_id, role_id, permission):
+        await self.conn.execute(
+            "DELETE FROM fake_permissions WHERE guild_id = ? AND role_id = ? AND permission = ?",
+            (guild_id, role_id, permission.lower()),
+        )
+        await self.conn.commit()
+
+    async def list_fake_permissions(self, guild_id, role_id=None):
+        if role_id:
+            cur = await self.conn.execute(
+                "SELECT * FROM fake_permissions WHERE guild_id = ? AND role_id = ?",
+                (guild_id, role_id),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT * FROM fake_permissions WHERE guild_id = ?", (guild_id,)
+            )
+        return await cur.fetchall()
+
+    async def has_fake_permission(self, guild_id, role_ids, permission):
+        if not role_ids:
+            return False
+        placeholders = ",".join("?" for _ in role_ids)
+        cur = await self.conn.execute(
+            f"SELECT 1 FROM fake_permissions WHERE guild_id = ? AND permission = ? AND role_id IN ({placeholders})",
+            (guild_id, permission.lower(), *role_ids),
+        )
+        return (await cur.fetchone()) is not None
+
+    async def reset_fake_permissions(self, guild_id):
+        await self.conn.execute("DELETE FROM fake_permissions WHERE guild_id = ?", (guild_id,))
         await self.conn.commit()
 
 

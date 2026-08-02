@@ -28,6 +28,7 @@ intents.members = True
 intents.message_content = True
 intents.voice_states = True
 intents.reactions = True
+intents.presences = True  # needed for vanity role status detection
 
 
 async def get_prefix(bot: "BleedClone", message: discord.Message):
@@ -63,6 +64,9 @@ class BleedClone(commands.Bot):
             "cogs.filter",
             "cogs.aliases",
             "cogs.utility",
+            "cogs.boosters",
+            "cogs.logging_events",
+            "cogs.fakeperms",
             "cogs.core",
         ):
             try:
@@ -87,6 +91,32 @@ class BleedClone(commands.Bot):
     async def on_ready(self):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
         await self.change_presence(activity=discord.Game(name=f"{DEFAULT_PREFIX}help"))
+
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        # Without this, a failed permission check or bad argument fails
+        # completely silently — the user just sees nothing happen.
+        if isinstance(error, commands.CommandNotFound):
+            return
+        if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
+            return await ctx.send("You don't have permission to use this command.")
+        if isinstance(error, commands.BotMissingPermissions):
+            missing = ", ".join(error.missing_permissions)
+            return await ctx.send(f"I'm missing permissions to do that: `{missing}`")
+        if isinstance(error, commands.MemberNotFound):
+            return await ctx.send(f"Couldn't find a member matching `{error.argument}`.")
+        if isinstance(error, commands.RoleNotFound):
+            return await ctx.send(f"Couldn't find a role matching `{error.argument}`.")
+        if isinstance(error, commands.ChannelNotFound):
+            return await ctx.send(f"Couldn't find a channel matching `{error.argument}`.")
+        if isinstance(error, commands.MissingRequiredArgument):
+            return await ctx.send(f"Missing argument: `{error.param.name}`. Check `,help {ctx.command}` for usage.")
+        if isinstance(error, commands.BadArgument):
+            return await ctx.send(f"Bad argument: {error}")
+        if isinstance(error, discord.Forbidden):
+            return await ctx.send("Discord won't let me do that — check my role position and permissions.")
+
+        log.exception("Unhandled command error in %s", ctx.command, exc_info=error)
+        await ctx.send(f"Something went wrong running that command: `{error}`")
 
 
 bot = BleedClone()
