@@ -136,6 +136,7 @@ class VoiceMaster(commands.Cog):
     async def vm_setup(self, ctx: commands.Context):
         category = await ctx.guild.create_category("Voice Channels")
         join_channel = await ctx.guild.create_voice_channel("➕ Join to Create", category=category)
+        interface_channel = await ctx.guild.create_text_channel("interface", category=category)
         await db.set_guild_config(
             ctx.guild.id,
             voicemaster_category_id=category.id,
@@ -155,8 +156,8 @@ class VoiceMaster(commands.Cog):
             ),
             inline=False,
         )
-        await ctx.channel.send(embed=embed, view=VoiceMasterInterfaceView())
-        await ctx.send(f"✅ VoiceMaster set up! Join {join_channel.mention} to get your own channel.")
+        await interface_channel.send(embed=embed, view=VoiceMasterInterfaceView())
+        await ctx.send(f"✅ VoiceMaster set up! Join {join_channel.mention} to get your own channel. Controls are in {interface_channel.mention}.")
 
     @voicemaster.command(name="category", description="Set which category new voice channels are created under.")
     @commands.has_permissions(manage_guild=True)
