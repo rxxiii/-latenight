@@ -67,6 +67,7 @@ class BleedClone(commands.Bot):
             "cogs.boosters",
             "cogs.logging_events",
             "cogs.fakeperms",
+            "cogs.snipe",
             "cogs.core",
         ):
             try:
