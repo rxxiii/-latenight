@@ -56,6 +56,26 @@ class Roles(commands.Cog):
         await db.remove_reaction_role(int(message_id), emoji)
         await ctx.send("Reaction role removed.")
 
+    @reactionrole.command(name="list")
+    async def reactionrole_list(self, ctx: commands.Context):
+        rows = await db.get_reaction_roles_for_guild(ctx.guild.id)
+        if not rows:
+            return await ctx.send("No reaction roles configured.")
+        lines = [f"{r['emoji']} → <@&{r['role_id']}> (message `{r['message_id']}`)" for r in rows]
+        await ctx.send("\n".join(lines)[:2000])
+
+    @reactionrole.command(name="removeall")
+    @app_commands.describe(message_id="ID of the message to clear reaction roles from")
+    async def reactionrole_removeall(self, ctx: commands.Context, message_id: str):
+        await db.remove_reaction_roles_for_message(int(message_id))
+        await ctx.send("Removed all reaction roles from that message.")
+
+    @reactionrole.command(name="reset")
+    @commands.has_permissions(administrator=True)
+    async def reactionrole_reset(self, ctx: commands.Context):
+        await db.reset_reaction_roles(ctx.guild.id)
+        await ctx.send("All reaction roles for this server have been reset.")
+
     @commands.Cog.listener("on_raw_reaction_add")
     async def on_raw_reaction_add_role(self, payload: discord.RawReactionActionEvent):
         if payload.member is None or payload.member.bot:
@@ -108,6 +128,33 @@ class Roles(commands.Cog):
         await db.add_button_role(ctx.guild.id, message.id, channel.id, label, role.id, custom_id)
         await ctx.send(f"Button role posted in {channel.mention}.")
 
+    @commands.hybrid_group(name="buttonrole-manage", invoke_without_command=True)
+    @commands.has_permissions(manage_roles=True)
+    async def buttonrole_manage(self, ctx: commands.Context):
+        await ctx.invoke(self.buttonrole_list)
+
+    @commands.hybrid_command(name="buttonrole-list", description="List all button role bindings in this server.")
+    @commands.has_permissions(manage_roles=True)
+    async def buttonrole_list(self, ctx: commands.Context):
+        rows = await db.get_button_roles_for_guild(ctx.guild.id)
+        if not rows:
+            return await ctx.send("No button roles configured.")
+        lines = [f"**{r['label']}** → <@&{r['role_id']}> (message `{r['message_id']}`)" for r in rows]
+        await ctx.send("\n".join(lines)[:2000])
+
+    @commands.hybrid_command(name="buttonrole-removeall", description="Remove all button roles tied to a specific message.")
+    @commands.has_permissions(manage_roles=True)
+    @app_commands.describe(message_id="ID of the message to clear button roles from")
+    async def buttonrole_removeall(self, ctx: commands.Context, message_id: str):
+        await db.remove_button_roles_for_message(int(message_id))
+        await ctx.send("Removed all button roles from that message.")
+
+    @commands.hybrid_command(name="buttonrole-reset", description="Wipe every button role configured in this server.")
+    @commands.has_permissions(administrator=True)
+    async def buttonrole_reset(self, ctx: commands.Context):
+        await db.reset_button_roles(ctx.guild.id)
+        await ctx.send("All button roles for this server have been reset.")
+
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component:
@@ -145,7 +192,7 @@ class Roles(commands.Cog):
 
     @starboard.command(name="threshold")
     @app_commands.describe(count="Number of star reactions needed to post to the starboard")
-    async def starboard_threshold(self, ctx: commands.Context, count: app_commands.Range[int, 1, 100]):
+    async def starboard_threshold(self, ctx: commands.Context, count: commands.Range[int, 1, 100]):
         await db.set_guild_config(ctx.guild.id, starboard_threshold=count)
         await ctx.send(f"Starboard threshold set to {count} ⭐.")
 
@@ -178,4 +225,20 @@ class Roles(commands.Cog):
         embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
         embed.add_field(name="Source", value=f"[Jump to message]({message.jump_url})")
         if message.attachments:
-            embed.set_image(url=message.attachments[0
+            embed.set_image(url=message.attachments[0].url)
+
+        if existing:
+            try:
+                starboard_message = await starboard_channel.fetch_message(existing["starboard_message_id"])
+                await starboard_message.edit(content=f"⭐ **{count}** | {channel.mention}", embed=embed)
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        else:
+            starboard_message = await starboard_channel.send(content=f"⭐ **{count}** | {channel.mention}", embed=embed)
+            await db.upsert_starboard_post(guild.id, message.id, starboard_message.id, count)
+            return
+        await db.upsert_starboard_post(guild.id, message.id, existing["starboard_message_id"], count)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Roles(bot))

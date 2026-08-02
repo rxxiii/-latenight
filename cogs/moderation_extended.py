@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from database import db
+from cogs.moderation import hierarchy_ok
 
 
 def parse_duration(duration: str) -> datetime.timedelta:
@@ -151,6 +152,9 @@ class ModerationExtended(commands.Cog):
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(member="Member to tempban", duration="e.g. 1d, 12h, 1w", reason="Reason for the ban")
     async def tempban(self, ctx: commands.Context, member: discord.Member, duration: str, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         try:
             delta = parse_duration(duration)
         except ValueError as e:
@@ -165,6 +169,9 @@ class ModerationExtended(commands.Cog):
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(member="Member to softban", reason="Reason for the softban")
     async def softban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         await ctx.guild.ban(member, reason=f"{ctx.author}: softban: {reason}", delete_message_seconds=604800)
         await ctx.guild.unban(member, reason="Softban auto-unban")
         await ctx.send(f"🔨 Softbanned **{member}** (messages purged, they can rejoin) — {reason}")
@@ -174,6 +181,9 @@ class ModerationExtended(commands.Cog):
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(member="Member to hardban", reason="Reason for the hardban")
     async def hardban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         await ctx.guild.ban(member, reason=f"{ctx.author}: hardban: {reason}")
         await db.add_hardban(ctx.guild.id, member.id, reason)
         await ctx.send(f"⛔ Hardbanned **{member}** — {reason}\nThis requires `,hardban remove` before it can be undone.")
@@ -191,6 +201,9 @@ class ModerationExtended(commands.Cog):
     @commands.check(staff_check)
     @app_commands.describe(member="Member to jail", reason="Reason for jailing")
     async def jail(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         row = await db.get_guild_config(ctx.guild.id)
         if not row["jail_role_id"] or not row["jail_channel_id"]:
             return await ctx.send("Run `,setup` first to create the jail role and channel.")

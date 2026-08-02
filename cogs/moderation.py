@@ -12,13 +12,26 @@ def parse_duration(duration: str) -> datetime.timedelta:
     units = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
     unit = duration[-1].lower()
     if unit not in units:
-        raise ValueError("Duration must end in s/m/h/d/w, e.g. 10m, 2h, 1d")
+        raise ValueError("not a duration")
     amount = float(duration[:-1])
     return datetime.timedelta(**{units[unit]: amount})
 
 
+def hierarchy_ok(ctx: commands.Context, target: discord.Member):
+    """Returns (True, '') if ctx.author is allowed to act on target, else
+    (False, <reason>). Blocks acting on the server owner or on anyone with
+    an equal/higher top role, unless the invoker IS the owner."""
+    if target.id == ctx.guild.owner_id:
+        return False, "You can't take action on the server owner."
+    if ctx.author.id == ctx.guild.owner_id:
+        return True, ""
+    if target.top_role >= ctx.author.top_role:
+        return False, "You can't take action on someone with an equal or higher role than you."
+    return True, ""
+
+
 class Moderation(commands.Cog):
-    """Ban, kick, mute, warn, purge, and channel lock commands."""
+    """Ban, kick, timeout, warn, purge, nickname, and channel lock commands."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -31,11 +44,26 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="ban", description="Ban a member from the server.")
     @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
-    @app_commands.describe(member="Member to ban", reason="Reason for the ban")
-    async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        if member.top_role >= ctx.author.top_role and ctx.author.id != ctx.guild.owner_id:
-            return await ctx.send("You can't ban someone with an equal or higher role than you.")
-        await member.ban(reason=f"{ctx.author}: {reason}")
+    @app_commands.describe(
+        member="Member to ban",
+        delete_history="How much recent message history to delete, e.g. 1d, 7d (optional)",
+        reason="Reason for the ban",
+    )
+    async def ban(self, ctx: commands.Context, member: discord.Member, delete_history: str = "0s", *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
+
+        try:
+            delete_seconds = int(parse_duration(delete_history).total_seconds())
+        except ValueError:
+            # They probably didn't mean to pass a duration at all — treat that
+            # word as the start of the reason instead, e.g. ",ban @user spamming"
+            reason = f"{delete_history} {reason}".strip()
+            delete_seconds = 0
+        delete_seconds = max(0, min(delete_seconds, 604800))
+
+        await member.ban(reason=f"{ctx.author}: {reason}", delete_message_seconds=delete_seconds)
         await ctx.send(f"🔨 Banned **{member}** — {reason}")
 
     @commands.hybrid_command(name="unban", description="Unban a user by ID.")
@@ -45,7 +73,7 @@ class Moderation(commands.Cog):
     async def unban(self, ctx: commands.Context, user_id: str):
         if await db.is_hardbanned(ctx.guild.id, int(user_id)):
             return await ctx.send(
-                "This user is hardbanned. Use `,hardban remove` first if you're sure you want to unban them."
+                "This user is hardbanned. Use `,hardban-remove` first if you're sure you want to unban them."
             )
         user = discord.Object(id=int(user_id))
         await ctx.guild.unban(user)
@@ -56,34 +84,38 @@ class Moderation(commands.Cog):
     @commands.bot_has_permissions(kick_members=True)
     @app_commands.describe(member="Member to kick", reason="Reason for the kick")
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
-        if member.top_role >= ctx.author.top_role and ctx.author.id != ctx.guild.owner_id:
-            return await ctx.send("You can't kick someone with an equal or higher role than you.")
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         await member.kick(reason=f"{ctx.author}: {reason}")
         await ctx.send(f"👢 Kicked **{member}** — {reason}")
 
-    # ---------- mute (timeout) ----------
+    # ---------- timeout ----------
 
     @commands.hybrid_command(name="timeout", aliases=["mute"], description="Timeout a member for a duration (e.g. 10m, 2h, 1d).")
     @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
-    @app_commands.describe(member="Member to mute", duration="e.g. 10m, 2h, 1d", reason="Reason for the mute")
-    async def mute(self, ctx: commands.Context, member: discord.Member, duration: str = "10m", *, reason: str = "No reason provided"):
+    @app_commands.describe(member="Member to timeout", duration="e.g. 10m, 2h, 1d", reason="Reason for the timeout")
+    async def timeout_cmd(self, ctx: commands.Context, member: discord.Member, duration: str = "10m", *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         try:
             delta = parse_duration(duration)
-        except ValueError as e:
-            return await ctx.send(str(e))
+        except ValueError:
+            return await ctx.send("Duration must end in s/m/h/d/w, e.g. 10m, 2h, 1d")
         if delta > datetime.timedelta(days=28):
             return await ctx.send("Timeouts can be at most 28 days.")
         await member.timeout(delta, reason=f"{ctx.author}: {reason}")
-        await ctx.send(f"🔇 Muted **{member}** for `{duration}` — {reason}")
+        await ctx.send(f"🔇 Timed out **{member}** for `{duration}` — {reason}")
 
-    @commands.hybrid_command(name="unmute", description="Remove a member's timeout.")
+    @commands.hybrid_command(name="untimeout", aliases=["unmute"], description="Remove a member's timeout.")
     @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
-    @app_commands.describe(member="Member to unmute")
-    async def unmute(self, ctx: commands.Context, member: discord.Member):
-        await member.timeout(None, reason=f"Unmuted by {ctx.author}")
-        await ctx.send(f"🔊 Unmuted **{member}**.")
+    @app_commands.describe(member="Member to remove timeout from", reason="Reason")
+    async def untimeout_cmd(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        await member.timeout(None, reason=f"{ctx.author}: {reason}")
+        await ctx.send(f"🔊 Removed timeout for **{member}**. {reason}")
 
     # ---------- warnings ----------
 
@@ -91,6 +123,9 @@ class Moderation(commands.Cog):
     @commands.has_permissions(moderate_members=True)
     @app_commands.describe(member="Member to warn", reason="Reason for the warning")
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         await db.add_warning(ctx.guild.id, member.id, ctx.author.id, reason)
         await ctx.send(f"⚠️ Warned **{member}** — {reason}")
         try:
@@ -122,17 +157,37 @@ class Moderation(commands.Cog):
         await db.clear_warnings(ctx.guild.id, member.id)
         await ctx.send(f"Cleared warnings for **{member}**.")
 
+    # ---------- nickname ----------
+
+    @commands.hybrid_command(name="nickname", aliases=["nick"], description="Change (or reset) a member's nickname.")
+    @commands.has_permissions(manage_nicknames=True)
+    @commands.bot_has_permissions(manage_nicknames=True)
+    @app_commands.describe(member="Member to rename", new_nickname="Leave blank to reset to their username")
+    async def nickname(self, ctx: commands.Context, member: discord.Member, *, new_nickname: str = None):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
+        await member.edit(nick=new_nickname, reason=f"Changed by {ctx.author}")
+        if new_nickname:
+            await ctx.send(f"Nickname for {member.mention} set to **{new_nickname}**.")
+        else:
+            await ctx.send(f"Nickname for {member.mention} reset.")
+
     # ---------- purge ----------
 
     @commands.hybrid_command(name="purge", description="Bulk delete messages in this channel.")
     @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     @app_commands.describe(amount="Number of messages to delete (max 100)")
-    async def purge(self, ctx: commands.Context, amount: app_commands.Range[int, 1, 100]):
-        await ctx.defer(ephemeral=True) if ctx.interaction else None
-        deleted = await ctx.channel.purge(limit=amount + (0 if ctx.interaction else 1))
-        msg = await ctx.send(f"🧹 Deleted {len(deleted)} messages.")
-        if not ctx.interaction:
+    async def purge(self, ctx: commands.Context, amount: commands.Range[int, 1, 100]):
+        if ctx.interaction:
+            await ctx.interaction.response.defer(ephemeral=True)
+            deleted = await ctx.channel.purge(limit=amount)
+            await ctx.interaction.followup.send(f"🧹 Deleted {len(deleted)} messages.", ephemeral=True)
+        else:
+            # +1 so the invoking ",purge N" message itself also gets swept up
+            deleted = await ctx.channel.purge(limit=amount + 1)
+            msg = await ctx.send(f"🧹 Deleted {len(deleted)} messages.")
             await msg.delete(delay=4)
 
     # ---------- lock / unlock / slowmode ----------
@@ -161,12 +216,26 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     @app_commands.describe(seconds="Delay in seconds (0 to disable, max 21600)")
-    async def slowmode(self, ctx: commands.Context, seconds: app_commands.Range[int, 0, 21600]):
+    async def slowmode(self, ctx: commands.Context, seconds: commands.Range[int, 0, 21600]):
         await ctx.channel.edit(slowmode_delay=seconds)
         if seconds == 0:
             await ctx.send("Slowmode disabled.")
         else:
             await ctx.send(f"🐌 Slowmode set to {seconds}s.")
+
+    # ---------- nuke ----------
+
+    @commands.hybrid_command(name="nuke", description="Clone this channel (same permissions) and delete the original.")
+    @commands.has_permissions(administrator=True)
+    @commands.bot_has_permissions(manage_channels=True)
+    async def nuke(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        channel = channel or ctx.channel
+        position = channel.position
+        new_channel = await channel.clone(reason=f"Nuked by {ctx.author}")
+        await new_channel.edit(position=position)
+        await channel.delete(reason=f"Nuked by {ctx.author}")
+        embed = discord.Embed(title="💥 Channel Nuked", description="This channel has been cleared.", color=discord.Color.red())
+        await new_channel.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
