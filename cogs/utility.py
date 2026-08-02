@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from database import db
+from cogs.moderation import hierarchy_ok
 
 
 class Utility(commands.Cog):
@@ -19,7 +20,11 @@ class Utility(commands.Cog):
     @app_commands.describe(reason="Optional reason")
     async def afk(self, ctx: commands.Context, *, reason: str = "AFK"):
         await db.set_afk(ctx.guild.id, ctx.author.id, reason, int(time.time()))
-        await ctx.send(f"💤 {ctx.author.mention} is now AFK: {reason}")
+        embed = discord.Embed(
+            description=f"✅ {ctx.author.mention}: You're now AFK with the status: **{reason}**",
+            color=discord.Color.green(),
+        )
+        await ctx.send(embed=embed)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -31,7 +36,11 @@ class Utility(commands.Cog):
         if existing:
             await db.remove_afk(message.guild.id, message.author.id)
             try:
-                await message.channel.send(f"👋 Welcome back {message.author.mention}, I've removed your AFK.", delete_after=8)
+                embed = discord.Embed(
+                    description=f"✅ Welcome back {message.author.mention}, I've removed your AFK.",
+                    color=discord.Color.green(),
+                )
+                await message.channel.send(embed=embed, delete_after=8)
             except discord.HTTPException:
                 pass
 
@@ -42,7 +51,11 @@ class Utility(commands.Cog):
             afk_row = await db.get_afk(message.guild.id, mentioned.id)
             if afk_row:
                 try:
-                    await message.channel.send(f"💤 {mentioned.display_name} is AFK: {afk_row['reason']}", delete_after=8)
+                    embed = discord.Embed(
+                        description=f"💤 {mentioned.mention} is AFK: **{afk_row['reason']}**",
+                        color=discord.Color.greyple(),
+                    )
+                    await message.channel.send(embed=embed, delete_after=8)
                 except discord.HTTPException:
                     pass
 
@@ -73,6 +86,9 @@ class Utility(commands.Cog):
     @commands.has_permissions(manage_roles=True)
     @app_commands.describe(member="Member to give/remove the role from", role="Role to toggle")
     async def role(self, ctx: commands.Context, member: discord.Member, role: discord.Role):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
         if role.position >= ctx.guild.me.top_role.position:
             return await ctx.send("That role is higher than or equal to my own top role — I can't manage it.")
         if role in member.roles:

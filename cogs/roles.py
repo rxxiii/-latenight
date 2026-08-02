@@ -196,13 +196,96 @@ class Roles(commands.Cog):
         await db.set_guild_config(ctx.guild.id, starboard_threshold=count)
         await ctx.send(f"Starboard threshold set to {count} ⭐.")
 
+    @starboard.command(name="set")
+    @app_commands.describe(channel="Channel where starred messages get reposted")
+    async def starboard_set(self, ctx: commands.Context, channel: discord.TextChannel):
+        await ctx.invoke(self.starboard_channel, channel=channel)
+
+    @starboard.command(name="lock")
+    async def starboard_lock(self, ctx: commands.Context):
+        await db.set_guild_config(ctx.guild.id, starboard_locked=1)
+        await ctx.send("🔒 Starboard locked — no new messages will be posted (existing ones still update).")
+
+    @starboard.command(name="unlock")
+    async def starboard_unlock(self, ctx: commands.Context):
+        await db.set_guild_config(ctx.guild.id, starboard_locked=0)
+        await ctx.send("🔓 Starboard unlocked.")
+
+    @starboard.command(name="emoji")
+    @app_commands.describe(emoji="Emoji to use instead of ⭐")
+    async def starboard_emoji(self, ctx: commands.Context, emoji: str):
+        await db.set_guild_config(ctx.guild.id, starboard_emoji=emoji)
+        await ctx.send(f"Starboard emoji set to {emoji}")
+
+    @starboard.command(name="selfstar")
+    @app_commands.describe(state="on or off")
+    async def starboard_selfstar(self, ctx: commands.Context, state: str):
+        await db.set_guild_config(ctx.guild.id, starboard_selfstar=1 if state.lower() in ("on", "enable", "true") else 0)
+        await ctx.send(f"Self-starring: **{state}**")
+
+    @starboard.command(name="color")
+    @app_commands.describe(hex_color="Hex color, e.g. #ff0000")
+    async def starboard_color(self, ctx: commands.Context, hex_color: str):
+        try:
+            int(hex_color.lstrip("#"), 16)
+        except ValueError:
+            return await ctx.send("That doesn't look like a valid hex color, e.g. `#ff0000`.")
+        await db.set_guild_config(ctx.guild.id, starboard_color=hex_color)
+        await ctx.send(f"Starboard embed color set to `{hex_color}`.")
+
+    @starboard.command(name="timestamp")
+    @app_commands.describe(state="on or off")
+    async def starboard_timestamp(self, ctx: commands.Context, state: str):
+        await db.set_guild_config(ctx.guild.id, starboard_timestamp=1 if state.lower() in ("on", "enable", "true") else 0)
+        await ctx.send(f"Timestamp display: **{state}**")
+
+    @starboard.command(name="jumpurl")
+    @app_commands.describe(state="on or off")
+    async def starboard_jumpurl(self, ctx: commands.Context, state: str):
+        await db.set_guild_config(ctx.guild.id, starboard_jumpurl=1 if state.lower() in ("on", "enable", "true") else 0)
+        await ctx.send(f"Jump-to-message link: **{state}**")
+
+    @starboard.command(name="attachments")
+    @app_commands.describe(state="on or off")
+    async def starboard_attachments(self, ctx: commands.Context, state: str):
+        await db.set_guild_config(ctx.guild.id, starboard_attachments=1 if state.lower() in ("on", "enable", "true") else 0)
+        await ctx.send(f"Attachment display: **{state}**")
+
+    @starboard.group(name="ignore", invoke_without_command=True)
+    async def starboard_ignore(self, ctx: commands.Context):
+        await ctx.invoke(self.starboard_ignore_list)
+
+    @starboard_ignore.command(name="add")
+    @app_commands.describe(channel="Channel to exclude from the starboard")
+    async def starboard_ignore_add(self, ctx: commands.Context, channel: discord.TextChannel):
+        await db.starboard_ignore_add(ctx.guild.id, channel.id)
+        await ctx.send(f"{channel.mention} is now ignored by the starboard.")
+
+    @starboard_ignore.command(name="remove")
+    @app_commands.describe(channel="Channel to stop ignoring")
+    async def starboard_ignore_remove(self, ctx: commands.Context, channel: discord.TextChannel):
+        await db.starboard_ignore_remove(ctx.guild.id, channel.id)
+        await ctx.send(f"{channel.mention} is no longer ignored.")
+
+    @starboard_ignore.command(name="list")
+    async def starboard_ignore_list(self, ctx: commands.Context):
+        ids = await db.starboard_ignore_list(ctx.guild.id)
+        if not ids:
+            return await ctx.send("No channels are ignored.")
+        await ctx.send("\n".join(f"<#{i}>" for i in ids))
+
     @commands.Cog.listener("on_raw_reaction_add")
     async def on_raw_reaction_add_star(self, payload: discord.RawReactionActionEvent):
-        if str(payload.emoji) != "⭐" or payload.guild_id is None:
+        if payload.guild_id is None:
             return
         row = await db.get_guild_config(payload.guild_id)
-        if not row["starboard_channel_id"]:
+        if not row["starboard_channel_id"] or row["starboard_locked"]:
             return
+        if str(payload.emoji) != (row["starboard_emoji"] or "⭐"):
+            return
+        if await db.is_starboard_ignored(payload.guild_id, payload.channel_id):
+            return
+
         guild = self.bot.get_guild(payload.guild_id)
         channel = guild.get_channel(payload.channel_id)
         if channel is None:
@@ -211,8 +294,19 @@ class Roles(commands.Cog):
             message = await channel.fetch_message(payload.message_id)
         except (discord.NotFound, discord.Forbidden):
             return
-        star_reaction = discord.utils.get(message.reactions, emoji="⭐")
+
+        star_emoji = row["starboard_emoji"] or "⭐"
+        star_reaction = discord.utils.get(message.reactions, emoji=star_emoji)
         count = star_reaction.count if star_reaction else 0
+
+        if not row["starboard_selfstar"]:
+            # Recompute the count without the author's own reaction, since
+            # discord.py's Reaction.count includes everyone regardless.
+            if star_reaction:
+                users = [u async for u in star_reaction.users()]
+                if message.author in users:
+                    count -= 1
+
         if count < row["starboard_threshold"]:
             return
 
@@ -221,23 +315,35 @@ class Roles(commands.Cog):
             return
 
         existing = await db.get_starboard_post(message.id)
-        embed = discord.Embed(description=message.content, color=discord.Color.gold(), timestamp=message.created_at)
+        embed_color = discord.Color.gold()
+        if row["starboard_color"]:
+            try:
+                embed_color = discord.Color(int(row["starboard_color"].lstrip("#"), 16))
+            except ValueError:
+                pass
+
+        embed = discord.Embed(
+            description=message.content,
+            color=embed_color,
+            timestamp=message.created_at if row["starboard_timestamp"] else None,
+        )
         embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
-        embed.add_field(name="Source", value=f"[Jump to message]({message.jump_url})")
-        if message.attachments:
+        if row["starboard_jumpurl"]:
+            embed.add_field(name="Source", value=f"[Jump to message]({message.jump_url})")
+        if row["starboard_attachments"] and message.attachments:
             embed.set_image(url=message.attachments[0].url)
 
+        content = f"{star_emoji} **{count}** | {channel.mention}"
         if existing:
             try:
                 starboard_message = await starboard_channel.fetch_message(existing["starboard_message_id"])
-                await starboard_message.edit(content=f"⭐ **{count}** | {channel.mention}", embed=embed)
+                await starboard_message.edit(content=content, embed=embed)
             except (discord.NotFound, discord.Forbidden):
                 pass
+            await db.upsert_starboard_post(guild.id, message.id, existing["starboard_message_id"], count)
         else:
-            starboard_message = await starboard_channel.send(content=f"⭐ **{count}** | {channel.mention}", embed=embed)
+            starboard_message = await starboard_channel.send(content=content, embed=embed)
             await db.upsert_starboard_post(guild.id, message.id, starboard_message.id, count)
-            return
-        await db.upsert_starboard_post(guild.id, message.id, existing["starboard_message_id"], count)
 
 
 async def setup(bot: commands.Bot):

@@ -176,7 +176,7 @@ class ModerationExtended(commands.Cog):
         await ctx.guild.unban(member, reason="Softban auto-unban")
         await ctx.send(f"🔨 Softbanned **{member}** (messages purged, they can rejoin) — {reason}")
 
-    @commands.hybrid_command(name="hardban", description="Permanently ban a member — can't be lifted with a normal /unban.")
+    @commands.hybrid_group(name="hardban", invoke_without_command=True, description="Permanently ban a member — can't be lifted with a normal /unban.")
     @commands.has_permissions(administrator=True)
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(member="Member to hardban", reason="Reason for the hardban")
@@ -188,10 +188,13 @@ class ModerationExtended(commands.Cog):
         await db.add_hardban(ctx.guild.id, member.id, reason)
         await ctx.send(f"⛔ Hardbanned **{member}** — {reason}\nThis requires `,hardban remove` before it can be undone.")
 
-    @commands.hybrid_command(name="hardban-remove", description="Lift a hardban so the user can be normally unbanned.")
+    @hardban.command(name="remove")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(user_id="ID of the hardbanned user")
     async def hardban_remove(self, ctx: commands.Context, user_id: str):
+        user_id = user_id.strip("<@!>")
+        if not user_id.isdigit():
+            return await ctx.send("That doesn't look like a valid user ID.")
         await db.remove_hardban(ctx.guild.id, int(user_id))
         await ctx.send(f"Hardban lifted for `{user_id}`. You can now use `,unban` on them.")
 

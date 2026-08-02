@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from database import db
+from cogs.fakeperms import fake_or_real_permission
 
 
 def parse_duration(duration: str) -> datetime.timedelta:
@@ -42,7 +43,7 @@ class Moderation(commands.Cog):
     # ---------- ban / kick ----------
 
     @commands.hybrid_command(name="ban", description="Ban a member from the server.")
-    @commands.has_permissions(ban_members=True)
+    @fake_or_real_permission("ban_members")
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(
         member="Member to ban",
@@ -71,16 +72,19 @@ class Moderation(commands.Cog):
     @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(user_id="The ID of the user to unban")
     async def unban(self, ctx: commands.Context, user_id: str):
+        user_id = user_id.strip("<@!>")
+        if not user_id.isdigit():
+            return await ctx.send("That doesn't look like a valid user ID.")
         if await db.is_hardbanned(ctx.guild.id, int(user_id)):
             return await ctx.send(
-                "This user is hardbanned. Use `,hardban-remove` first if you're sure you want to unban them."
+                "This user is hardbanned. Use `,hardban remove` first if you're sure you want to unban them."
             )
         user = discord.Object(id=int(user_id))
         await ctx.guild.unban(user)
         await ctx.send(f"✅ Unbanned user `{user_id}`.")
 
     @commands.hybrid_command(name="kick", description="Kick a member from the server.")
-    @commands.has_permissions(kick_members=True)
+    @fake_or_real_permission("kick_members")
     @commands.bot_has_permissions(kick_members=True)
     @app_commands.describe(member="Member to kick", reason="Reason for the kick")
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
@@ -93,7 +97,7 @@ class Moderation(commands.Cog):
     # ---------- timeout ----------
 
     @commands.hybrid_command(name="timeout", aliases=["mute"], description="Timeout a member for a duration (e.g. 10m, 2h, 1d).")
-    @commands.has_permissions(moderate_members=True)
+    @fake_or_real_permission("moderate_members")
     @commands.bot_has_permissions(moderate_members=True)
     @app_commands.describe(member="Member to timeout", duration="e.g. 10m, 2h, 1d", reason="Reason for the timeout")
     async def timeout_cmd(self, ctx: commands.Context, member: discord.Member, duration: str = "10m", *, reason: str = "No reason provided"):
@@ -120,7 +124,7 @@ class Moderation(commands.Cog):
     # ---------- warnings ----------
 
     @commands.hybrid_command(name="warn", description="Warn a member.")
-    @commands.has_permissions(moderate_members=True)
+    @fake_or_real_permission("moderate_members")
     @app_commands.describe(member="Member to warn", reason="Reason for the warning")
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         ok, error = hierarchy_ok(ctx, member)
@@ -176,7 +180,7 @@ class Moderation(commands.Cog):
     # ---------- purge ----------
 
     @commands.hybrid_command(name="purge", description="Bulk delete messages in this channel.")
-    @commands.has_permissions(manage_messages=True)
+    @fake_or_real_permission("manage_messages")
     @commands.bot_has_permissions(manage_messages=True)
     @app_commands.describe(amount="Number of messages to delete (max 100)")
     async def purge(self, ctx: commands.Context, amount: commands.Range[int, 1, 100]):
