@@ -86,8 +86,18 @@ class Core(commands.Cog):
                 reference = resolved
 
         if ctx.interaction:
-            await channel.send(message, reference=reference)
-            await ctx.send("Sent.", ephemeral=True)
+            if reference is not None or channel.id != ctx.channel.id:
+                # A reply or a different target channel needs a real
+                # channel.send() call (interaction responses can't do this).
+                try:
+                    await channel.send(message, reference=reference)
+                except discord.Forbidden:
+                    return await ctx.send("I don't have access to send messages there.", ephemeral=True)
+                await ctx.send("Sent.", ephemeral=True)
+            else:
+                # Respond through the interaction itself — this works even in
+                # DMs/group chats where the bot has no direct channel access.
+                await ctx.send(message)
         else:
             try:
                 await ctx.message.delete()
