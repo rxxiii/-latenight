@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS guild_config (
     booster_award_role_id INTEGER,
     vanity_phrase TEXT,
     vanity_message TEXT,
-    vanity_award_channel_id INTEGER
+    vanity_award_channel_id INTEGER,
+    content_filter_enabled INTEGER DEFAULT 0,
+    content_filter_log_channel_id INTEGER,
+    content_filter_action TEXT DEFAULT 'delete'
 );
 
 CREATE TABLE IF NOT EXISTS warnings (
@@ -344,6 +347,9 @@ class Database:
             ("guild_config", "vanity_phrase", "TEXT"),
             ("guild_config", "vanity_message", "TEXT"),
             ("guild_config", "vanity_award_channel_id", "INTEGER"),
+            ("guild_config", "content_filter_enabled", "INTEGER DEFAULT 0"),
+            ("guild_config", "content_filter_log_channel_id", "INTEGER"),
+            ("guild_config", "content_filter_action", "TEXT DEFAULT 'delete'"),
         ]
         for table, column, coltype in migrations:
             try:
