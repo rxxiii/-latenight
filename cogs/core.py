@@ -5,11 +5,33 @@ from discord.ext import commands
 from database import db
 
 
+class SayReplyModal(discord.ui.Modal, title="Say something"):
+    text = discord.ui.TextInput(label="Message", style=discord.TextStyle.paragraph, max_length=2000)
+
+    def __init__(self, target_message: discord.Message):
+        super().__init__()
+        self.target_message = target_message
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.target_message.reply(str(self.text))
+        await interaction.response.send_message("Sent.", ephemeral=True)
+
+
 class Core(commands.Cog):
     """Prefix management and general utility commands."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.say_reply_menu = app_commands.ContextMenu(name="Say (reply to this)", callback=self.say_reply_context)
+        self.bot.tree.add_command(self.say_reply_menu)
+
+    async def cog_unload(self):
+        self.bot.tree.remove_command(self.say_reply_menu.name, type=self.say_reply_menu.type)
+
+    async def say_reply_context(self, interaction: discord.Interaction, message: discord.Message):
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
+        await interaction.response.send_modal(SayReplyModal(message))
 
     @commands.hybrid_group(name="prefix", invoke_without_command=True)
     @commands.guild_only()
@@ -28,18 +50,40 @@ class Core(commands.Cog):
 
     @commands.hybrid_command(name="say", description="Make the bot say something.")
     @commands.has_permissions(manage_messages=True)
-    @app_commands.describe(message="What the bot should say", channel="Channel to send it in (defaults to here)")
-    async def say(self, ctx: commands.Context, message: str, channel: discord.TextChannel = None):
+    @app_commands.describe(
+        message="What the bot should say",
+        channel="Channel to send it in (defaults to here)",
+        reply_to="Message ID to reply to (optional)",
+    )
+    async def say(self, ctx: commands.Context, message: str, channel: discord.TextChannel = None, reply_to: str = None):
         channel = channel or ctx.channel
+
+        reference = None
+        if reply_to:
+            reply_to = reply_to.strip("<>")
+            if not reply_to.isdigit():
+                await ctx.send("That doesn't look like a valid message ID.", ephemeral=bool(ctx.interaction))
+                return
+            try:
+                reference = await channel.fetch_message(int(reply_to))
+            except (discord.NotFound, discord.Forbidden):
+                await ctx.send("Couldn't find that message to reply to.", ephemeral=bool(ctx.interaction))
+                return
+        elif not ctx.interaction and ctx.message.reference:
+            # If you reply to a message and then use ,say, it replies to that same message.
+            resolved = ctx.message.reference.resolved
+            if isinstance(resolved, discord.Message):
+                reference = resolved
+
         if ctx.interaction:
-            await channel.send(message)
+            await channel.send(message, reference=reference)
             await ctx.send("Sent.", ephemeral=True)
         else:
             try:
                 await ctx.message.delete()
             except discord.HTTPException:
                 pass
-            await channel.send(message)
+            await channel.send(message, reference=reference)
 
     @commands.hybrid_command(name="ping", description="Check the bot's latency.")
     async def ping(self, ctx: commands.Context):
