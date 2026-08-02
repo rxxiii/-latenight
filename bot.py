@@ -93,6 +93,13 @@ class BleedClone(commands.Bot):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
         await self.change_presence(activity=discord.Game(name=f"{DEFAULT_PREFIX}help"))
 
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        # Lets people fix a typo'd command (,timeotu -> ,timeout) by editing
+        # the message instead of retyping it.
+        if before.content == after.content:
+            return
+        await self.process_commands(after)
+
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         # Without this, a failed permission check or bad argument fails
         # completely silently — the user just sees nothing happen.
