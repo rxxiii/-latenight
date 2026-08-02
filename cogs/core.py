@@ -5,6 +5,12 @@ from discord.ext import commands
 from database import db
 
 
+async def say_permission_check(ctx: commands.Context) -> bool:
+    if ctx.guild is None:
+        return True  # in a DM/group chat there's no server permission system to check
+    return ctx.author.guild_permissions.manage_messages
+
+
 class SayReplyModal(discord.ui.Modal, title="Say something"):
     text = discord.ui.TextInput(label="Message", style=discord.TextStyle.paragraph, max_length=2000)
 
@@ -28,8 +34,10 @@ class Core(commands.Cog):
     async def cog_unload(self):
         self.bot.tree.remove_command(self.say_reply_menu.name, type=self.say_reply_menu.type)
 
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def say_reply_context(self, interaction: discord.Interaction, message: discord.Message):
-        if not interaction.user.guild_permissions.manage_messages:
+        if interaction.guild is not None and not interaction.user.guild_permissions.manage_messages:
             return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
         await interaction.response.send_modal(SayReplyModal(message))
 
@@ -49,7 +57,9 @@ class Core(commands.Cog):
         await ctx.send(f"Prefix updated to `{new_prefix}`.")
 
     @commands.hybrid_command(name="say", description="Make the bot say something.")
-    @commands.has_permissions(manage_messages=True)
+    @commands.check(say_permission_check)
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.describe(
         message="What the bot should say",
         channel="Channel to send it in (defaults to here)",
