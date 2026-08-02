@@ -61,6 +61,8 @@ class BleedClone(commands.Bot):
             "cogs.antinuke",
             "cogs.antiraid",
             "cogs.filter",
+            "cogs.aliases",
+            "cogs.utility",
             "cogs.core",
         ):
             try:

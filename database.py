@@ -109,7 +109,11 @@ CREATE TABLE IF NOT EXISTS giveaways (
     winner_count INTEGER,
     host_id INTEGER,
     end_time INTEGER,
-    ended INTEGER DEFAULT 0
+    ended INTEGER DEFAULT 0,
+    description TEXT,
+    thumbnail_url TEXT,
+    image_url TEXT,
+    required_roles TEXT
 );
 
 CREATE TABLE IF NOT EXISTS giveaway_entries (
@@ -195,6 +199,21 @@ CREATE TABLE IF NOT EXISTS jailed_members (
     previous_roles TEXT,
     PRIMARY KEY (guild_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS command_aliases (
+    guild_id INTEGER,
+    alias TEXT,
+    command TEXT,
+    PRIMARY KEY (guild_id, alias)
+);
+
+CREATE TABLE IF NOT EXISTS afk_status (
+    guild_id INTEGER,
+    user_id INTEGER,
+    reason TEXT,
+    set_at INTEGER,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 
@@ -217,6 +236,10 @@ class Database:
         migrations = [
             ("guild_config", "jail_role_id", "INTEGER"),
             ("guild_config", "jail_channel_id", "INTEGER"),
+            ("giveaways", "description", "TEXT"),
+            ("giveaways", "thumbnail_url", "TEXT"),
+            ("giveaways", "image_url", "TEXT"),
+            ("giveaways", "required_roles", "TEXT"),
         ]
         for table, column, coltype in migrations:
             try:
@@ -323,6 +346,20 @@ class Database:
         )
         return await cur.fetchone()
 
+    async def get_reaction_roles_for_guild(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM reaction_roles WHERE guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    async def remove_reaction_roles_for_message(self, message_id):
+        await self.conn.execute("DELETE FROM reaction_roles WHERE message_id = ?", (message_id,))
+        await self.conn.commit()
+
+    async def reset_reaction_roles(self, guild_id):
+        await self.conn.execute("DELETE FROM reaction_roles WHERE guild_id = ?", (guild_id,))
+        await self.conn.commit()
+
     # ---------- button roles ----------
 
     async def add_button_role(self, guild_id, message_id, channel_id, label, role_id, custom_id):
@@ -342,6 +379,24 @@ class Database:
     async def get_all_button_roles(self):
         cur = await self.conn.execute("SELECT * FROM button_roles")
         return await cur.fetchall()
+
+    async def get_button_roles_for_guild(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM button_roles WHERE guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    async def remove_button_role(self, custom_id):
+        await self.conn.execute("DELETE FROM button_roles WHERE custom_id = ?", (custom_id,))
+        await self.conn.commit()
+
+    async def remove_button_roles_for_message(self, message_id):
+        await self.conn.execute("DELETE FROM button_roles WHERE message_id = ?", (message_id,))
+        await self.conn.commit()
+
+    async def reset_button_roles(self, guild_id):
+        await self.conn.execute("DELETE FROM button_roles WHERE guild_id = ?", (guild_id,))
+        await self.conn.commit()
 
     # ---------- starboard ----------
 
@@ -434,6 +489,28 @@ class Database:
             "SELECT * FROM giveaways WHERE ended = 0"
         )
         return await cur.fetchall()
+
+    async def get_active_giveaways_for_guild(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM giveaways WHERE ended = 0 AND guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    async def edit_giveaway(self, message_id, **fields):
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [message_id]
+        await self.conn.execute(
+            f"UPDATE giveaways SET {cols} WHERE message_id = ?", values
+        )
+        await self.conn.commit()
+
+    async def delete_giveaway(self, message_id):
+        await self.conn.execute(
+            "DELETE FROM giveaway_entries WHERE giveaway_id = (SELECT id FROM giveaways WHERE message_id = ?)",
+            (message_id,),
+        )
+        await self.conn.execute("DELETE FROM giveaways WHERE message_id = ?", (message_id,))
+        await self.conn.commit()
 
     async def end_giveaway(self, message_id):
         await self.conn.execute(
@@ -741,6 +818,59 @@ class Database:
     async def remove_jailed(self, guild_id, user_id):
         await self.conn.execute(
             "DELETE FROM jailed_members WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    # ---------- command aliases ----------
+
+    async def add_alias(self, guild_id, alias, command):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO command_aliases (guild_id, alias, command) VALUES (?, ?, ?)",
+            (guild_id, alias.lower(), command),
+        )
+        await self.conn.commit()
+
+    async def remove_alias(self, guild_id, alias):
+        await self.conn.execute(
+            "DELETE FROM command_aliases WHERE guild_id = ? AND alias = ?",
+            (guild_id, alias.lower()),
+        )
+        await self.conn.commit()
+
+    async def get_alias(self, guild_id, alias):
+        cur = await self.conn.execute(
+            "SELECT command FROM command_aliases WHERE guild_id = ? AND alias = ?",
+            (guild_id, alias.lower()),
+        )
+        row = await cur.fetchone()
+        return row["command"] if row else None
+
+    async def list_aliases(self, guild_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM command_aliases WHERE guild_id = ?", (guild_id,)
+        )
+        return await cur.fetchall()
+
+    # ---------- afk ----------
+
+    async def set_afk(self, guild_id, user_id, reason, set_at):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO afk_status (guild_id, user_id, reason, set_at) VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, reason, set_at),
+        )
+        await self.conn.commit()
+
+    async def get_afk(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM afk_status WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+        return await cur.fetchone()
+
+    async def remove_afk(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM afk_status WHERE guild_id = ? AND user_id = ?",
             (guild_id, user_id),
         )
         await self.conn.commit()
