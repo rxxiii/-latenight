@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import urllib.parse
 
@@ -6,6 +7,8 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+log = logging.getLogger("bleedclone.games")
 
 # ==================== Black Tea (word bomb game) ====================
 
@@ -217,7 +220,9 @@ class Games(commands.Cog):
         self.session: aiohttp.ClientSession | None = None
 
     async def cog_load(self):
-        self.session = aiohttp.ClientSession()
+        self.session = aiohttp.ClientSession(
+            headers={"User-Agent": "DiscordBleedClone/1.0 (contact: bot-owner@example.com)"}
+        )
 
     async def cog_unload(self):
         if self.session:
@@ -283,9 +288,11 @@ class Games(commands.Cog):
         try:
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
+                    log.warning("GeoGuess: Wikipedia returned %s for %s", resp.status, title)
                     return None
                 data = await resp.json()
-        except Exception:
+        except Exception as e:
+            log.warning("GeoGuess: request failed for %s: %s", title, e)
             return None
         thumb = data.get("originalimage") or data.get("thumbnail")
         return thumb.get("source") if thumb else None
