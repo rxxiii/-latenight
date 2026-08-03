@@ -433,8 +433,11 @@ class Games(commands.Cog):
                     guess_lower = guess_text.lower()
                     is_correct = guess_lower in valid_answers
                     iso = COUNTRY_CODES.get(guess_lower)
-                    flag = flag_emoji(iso) + " " if iso else ""
 
+                    if not is_correct and iso is None:
+                        continue  # not a recognized country name — ignore, don't clutter the list
+
+                    flag = flag_emoji(iso) + " " if iso else ""
                     line = f"{flag}{msg.author.mention}: {guess_text}"
                     if is_correct:
                         line += " ✅"
