@@ -71,6 +71,7 @@ class BleedClone(commands.Bot):
             "cogs.blacklist",
             "cogs.content_filter",
             "cogs.lockdown",
+            "cogs.games",
             "cogs.core",
         ):
             try:
