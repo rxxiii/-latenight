@@ -20,11 +20,13 @@ MAX_FILE_BYTES = 19 * 1024 * 1024
 CLASSIFY_PROMPT = (
     "You are a content moderation classifier for a Discord server. Look at this "
     "image or video and determine if it contains any of the following: graphic "
-    "violence or gore, blood, pornography or explicit sexual content, or other "
-    "content that would violate Discord's Terms of Service (e.g. content "
-    "promoting self-harm, illegal content, or extreme real-world violence). "
+    "violence or gore, blood, nudity (partial or full), pornography or explicit "
+    "sexual content, sexually suggestive content involving minors (always flag "
+    "this regardless of context), or other content that would violate Discord's "
+    "Terms of Service (e.g. content promoting self-harm, illegal content, or "
+    "extreme real-world violence). Err on the side of flagging borderline nudity. "
     "Respond ONLY with compact JSON in this exact shape, nothing else: "
-    '{"flagged": true or false, "category": "gore" or "pornography" or "other_violation" or "none", "reason": "brief reason"}'
+    '{"flagged": true or false, "category": "gore" or "nudity" or "pornography" or "other_violation" or "none", "reason": "brief reason"}'
 )
 
 

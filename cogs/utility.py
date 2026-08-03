@@ -61,12 +61,23 @@ class Utility(commands.Cog):
 
     # ---------- avatar / banner ----------
 
-    @commands.hybrid_command(name="avatar", description="Show a member's avatar.")
+    @commands.hybrid_command(name="avatar", aliases=["av"], description="Show a member's global (account) avatar.")
     @app_commands.describe(member="Member to look up (defaults to you)")
     async def avatar(self, ctx: commands.Context, member: discord.Member = None):
         member = member or ctx.author
+        user = await self.bot.fetch_user(member.id)  # a clean User object always has the global avatar, never a per-server override
         embed = discord.Embed(title=f"{member}'s avatar", color=discord.Color.blurple())
-        embed.set_image(url=member.display_avatar.url)
+        embed.set_image(url=user.display_avatar.url)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="sav", description="Show a member's server-specific avatar, if they have one.")
+    @app_commands.describe(member="Member to look up (defaults to you)")
+    async def server_avatar(self, ctx: commands.Context, member: discord.Member = None):
+        member = member or ctx.author
+        if member.guild_avatar is None:
+            return await ctx.send(f"**{member}** doesn't have a server-specific avatar set here.")
+        embed = discord.Embed(title=f"{member}'s server avatar", color=discord.Color.blurple())
+        embed.set_image(url=member.guild_avatar.url)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="banner", description="Show a member's profile banner.")
