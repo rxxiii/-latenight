@@ -8,6 +8,34 @@ from database import db
 from cogs.moderation import hierarchy_ok
 
 
+async def find_role(guild: discord.Guild, query: str) -> discord.Role | None:
+    """Resolve a role from a mention/ID/exact name first, then fall back to
+    startswith/contains matching so ',role @user pic' can still find a role
+    named 'pics'."""
+    query = query.strip()
+    if query.startswith("<@&") and query.endswith(">"):
+        try:
+            return guild.get_role(int(query[3:-1]))
+        except ValueError:
+            pass
+    if query.isdigit():
+        role = guild.get_role(int(query))
+        if role:
+            return role
+
+    query_lower = query.lower()
+    for role in guild.roles:
+        if role.name.lower() == query_lower:
+            return role
+    for role in guild.roles:
+        if role.name.lower().startswith(query_lower):
+            return role
+    for role in guild.roles:
+        if query_lower in role.name.lower():
+            return role
+    return None
+
+
 class Utility(commands.Cog):
     """AFK status, avatar/banner lookup, and role management."""
 
@@ -93,21 +121,25 @@ class Utility(commands.Cog):
 
     # ---------- role management ----------
 
-    @commands.hybrid_group(name="role", invoke_without_command=True)
+    @commands.hybrid_group(name="role", aliases=["r"], invoke_without_command=True)
     @commands.has_permissions(manage_roles=True)
-    @app_commands.describe(member="Member to give/remove the role from", role="Role to toggle")
-    async def role(self, ctx: commands.Context, member: discord.Member, role: discord.Role):
+    @app_commands.describe(member="Member to give/remove the role from", role="Role to toggle (name, partial name, mention, or ID)")
+    async def role(self, ctx: commands.Context, member: discord.Member, *, role: str):
+        found_role = await find_role(ctx.guild, role)
+        if found_role is None:
+            return await ctx.send(f"Couldn't find a role matching `{role}`.")
+
         ok, error = hierarchy_ok(ctx, member)
         if not ok:
             return await ctx.send(error)
-        if role.position >= ctx.guild.me.top_role.position:
+        if found_role.position >= ctx.guild.me.top_role.position:
             return await ctx.send("That role is higher than or equal to my own top role — I can't manage it.")
-        if role in member.roles:
-            await member.remove_roles(role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(f"Removed {role.mention} from {member.mention}.")
+        if found_role in member.roles:
+            await member.remove_roles(found_role, reason=f"Toggled by {ctx.author}")
+            await ctx.send(f"Removed {found_role.mention} from {member.mention}.")
         else:
-            await member.add_roles(role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(f"Gave {role.mention} to {member.mention}.")
+            await member.add_roles(found_role, reason=f"Toggled by {ctx.author}")
+            await ctx.send(f"Gave {found_role.mention} to {member.mention}.")
 
     @role.command(name="create")
     @app_commands.describe(name="Name for the new role", color="Hex color, e.g. #ff0000 (optional)")

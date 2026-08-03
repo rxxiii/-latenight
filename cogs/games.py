@@ -19,8 +19,9 @@ TRIGRAMS = [
 
 
 class BlackTeaGame:
-    def __init__(self, channel: discord.TextChannel):
+    def __init__(self, channel: discord.TextChannel, session: aiohttp.ClientSession):
         self.channel = channel
+        self.session = session
         self.players: list[discord.Member] = []
         self.lives: dict[int, int] = {}
         self.used_words: set[str] = set()
@@ -32,6 +33,16 @@ class BlackTeaGame:
 
     def alive_players(self):
         return [p for p in self.players if self.lives[p.id] > 0]
+
+    async def is_real_word(self, word: str) -> bool:
+        try:
+            async with self.session.get(
+                f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                return resp.status == 200
+        except Exception:
+            return True  # if the dictionary API is having issues, don't punish the player for it
 
     async def run(self, bot: commands.Bot):
         order = self.alive_players()
@@ -58,20 +69,38 @@ class BlackTeaGame:
                     and len(content) >= 3
                 )
 
+            failed_turn = False
+            timed_out = False
             try:
                 msg = await bot.wait_for("message", check=check, timeout=10)
-                self.used_words.add(msg.content.lower().strip())
-                try:
-                    await msg.add_reaction("✅")
-                except discord.HTTPException:
-                    pass
+                word = msg.content.lower().strip()
+                if await self.is_real_word(word):
+                    self.used_words.add(word)
+                    try:
+                        await msg.add_reaction("✅")
+                    except discord.HTTPException:
+                        pass
+                else:
+                    failed_turn = True
+                    try:
+                        await msg.add_reaction("❌")
+                    except discord.HTTPException:
+                        pass
             except asyncio.TimeoutError:
+                failed_turn = True
+                timed_out = True
+
+            if failed_turn:
                 self.lives[player.id] -= 1
                 if self.lives[player.id] <= 0:
                     await self.channel.send(f"💀 {player.mention} is out of lives and eliminated!")
-                else:
+                elif timed_out:
                     await self.channel.send(
                         f"⏱️ Time's up! {player.mention} loses a life ({self.lives[player.id]} left)."
+                    )
+                else:
+                    await self.channel.send(
+                        f"❌ Not a real word! {player.mention} loses a life ({self.lives[player.id]} left)."
                     )
 
         survivors = self.alive_players()
@@ -203,7 +232,7 @@ class Games(commands.Cog):
         self.active_blacktea.add(ctx.channel.id)
 
         try:
-            game = BlackTeaGame(ctx.channel)
+            game = BlackTeaGame(ctx.channel, self.session)
             embed = discord.Embed(
                 title="⏰ Waiting for players, react with ✅ to join. The game will begin in 30 seconds.",
                 description=(
