@@ -12,138 +12,34 @@ from database import db
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+# Gemini's inline (base64-in-request) upload limit is ~20MB — stay under it.
+MAX_FILE_BYTES = 19 * 1024 * 1024
+
+CLASSIFY_PROMPT = (
+    "You are a strict Discord media safety classifier. Analyze the attached image, "
+    "GIF, or video. Flag clearly unsafe visual content. Be especially strict about "
+    "nudity and sexual content: flag photographs, GIFs, drawings, anime, manga, "
+    "cartoons, CGI, game footage, and AI-generated media showing exposed genitals, "
+    "nipples/breasts, explicit sexual activity, or clearly sexualized nudity. "
+    "Also flag graphic gore and blood, including realistic or fictional blood, "
+    "graphic wounds, dismemberment, exposed organs, corpses, severe injuries, "
+    "and graphic violence. Fictional, animated, illustrated, or game gore counts "
+    "too. Flag graphic self-harm, extreme animal gore/cruelty, extreme violent "
+    "death, and clearly violent extremist propaganda. Do not flag normal clothing, "
+    "ordinary swimwear, non-sexual medical diagrams, harmless red objects/liquids, "
+    "or non-graphic violence. "
+    "For animated media, consider the entire supplied media and flag if prohibited "
+    "content appears in any visible frame. "
+    'Respond ONLY with compact JSON in this exact shape: '
+    '{"flagged": true or false, "category": "gore" or "pornography" or "minor_sexual_content" or "violence" or "self_harm" or "animal_gore" or "extremism" or "none", "reason": "brief reason"}'
 )
-
-# Keep comfortably below Gemini's inline-data request limit.
-MAX_FILE_BYTES = int(
-    os.getenv("CONTENT_FILTER_MAX_FILE_MB", "19")
-) * 1024 * 1024
-
-MAX_ATTACHMENTS_PER_MESSAGE = 10
-
-
-CLASSIFY_PROMPT = """
-You are a STRICT Discord media safety classifier.
-
-Analyze the attached IMAGE OR VIDEO and determine whether it should be
-removed from a general-audience Discord server.
-
-IMPORTANT: Be aggressive about BLOOD and GORE.
-
-FLAG "gore" when ANY of the following are clearly present:
-
-- Graphic blood or bleeding
-- Large amounts of blood
-- Blood covering a person, animal, object, or scene
-- Graphic wounds
-- Open wounds
-- Exposed flesh
-- Exposed organs
-- Dismemberment
-- Decapitation
-- Corpses shown graphically
-- Severely mutilated bodies
-- Graphic medical trauma
-- Graphic injury close-ups
-- Graphic death
-- Extreme violence
-- Gore compilations
-
-This applies EVEN IF THE CONTENT IS:
-- A drawing
-- Anime
-- Manga
-- Cartoon
-- Illustration
-- Digital art
-- CGI
-- A video game
-- A meme
-- AI-generated
-- Fictional
-
-Therefore, graphic fictional/cartoon/anime/game blood and gore MUST also
-be flagged.
-
-Do NOT flag something merely because it contains the color red, a tiny
-non-graphic injury, ketchup, tomato sauce, or ordinary non-graphic violence.
-
-FLAG "pornography" when there is:
-- Explicit sexual activity
-- Sexual intercourse
-- Explicit sexual acts
-- Visible genitals in a sexual context
-- Explicit nudity intended to be sexual
-- Sexual fluids
-- Clearly pornographic material
-- Explicit sexual drawings/anime/manga
-- Explicit digitally generated sexual imagery
-
-FLAG "minor_sexual_content" for sexual or exploitative content involving
-someone who appears to be under 18. Treat this category extremely
-seriously.
-
-FLAG "violence" for extreme real-world violence or graphic violent death,
-even when the image does not clearly fit the gore category.
-
-FLAG "self_harm" for graphic depictions of suicide, suicide attempts,
-self-harm injuries, or graphic self-harm methods.
-
-FLAG "animal_gore" for graphic animal injuries, mutilation, slaughter,
-animal corpses, or extreme animal cruelty.
-
-FLAG "extremism" for clearly identifiable extremist/terrorist propaganda
-that promotes or glorifies serious violence.
-
-For all other content, only flag it when it is clearly unsafe or clearly
-falls into one of the categories above.
-
-Do NOT flag:
-- Normal clothing
-- Normal swimwear
-- Non-sexual medical diagrams
-- Ordinary non-graphic injuries
-- Harmless red objects/liquids
-- Normal fictional fighting without graphic injury
-- Non-explicit romance
-- Mild cartoon violence
-
-Return ONLY valid compact JSON.
-
-Use exactly this structure:
-
-{
-  "flagged": true,
-  "category": "gore",
-  "reason": "brief explanation"
-}
-
-Allowed categories:
-"gore"
-"pornography"
-"minor_sexual_content"
-"violence"
-"self_harm"
-"animal_gore"
-"extremism"
-"other_violation"
-"none"
-
-If nothing should be removed, return:
-
-{
-  "flagged": false,
-  "category": "none",
-  "reason": "No prohibited content detected."
-}
-"""
 
 
 class ContentFilter(commands.Cog):
-    """Scans uploaded images/videos with Gemini and removes flagged media."""
+    """Scans uploaded images/videos with the Gemini API and removes anything
+    flagged as gore, pornography, or a Discord ToS violation."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -156,383 +52,141 @@ class ContentFilter(commands.Cog):
         if self.session:
             await self.session.close()
 
-    @commands.hybrid_group(
-        name="contentfilter",
-        aliases=["cf"],
-        invoke_without_command=True
-    )
+    @commands.hybrid_group(name="contentfilter", aliases=["cf"], invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     async def contentfilter(self, ctx: commands.Context):
         row = await db.get_guild_config(ctx.guild.id)
-
-        embed = discord.Embed(
-            title="Content Filter (Gemini)",
-            color=discord.Color.blurple()
-        )
-
-        embed.add_field(
-            name="Enabled",
-            value="✅" if row["content_filter_enabled"] else "❌"
-        )
-
-        embed.add_field(
-            name="Action",
-            value=row["content_filter_action"] or "delete"
-        )
-
+        embed = discord.Embed(title="Content Filter (Gemini)", color=discord.Color.blurple())
+        embed.add_field(name="Enabled", value="✅" if row["content_filter_enabled"] else "❌")
+        embed.add_field(name="Action", value=row["content_filter_action"] or "delete")
         embed.add_field(
             name="Log channel",
-            value=(
-                f"<#{row['content_filter_log_channel_id']}>"
-                if row["content_filter_log_channel_id"]
-                else "None"
-            )
+            value=f"<#{row['content_filter_log_channel_id']}>" if row["content_filter_log_channel_id"] else "None",
         )
-
         if not GEMINI_API_KEY:
-            embed.add_field(
-                name="⚠️ Warning",
-                value=(
-                    "No `GEMINI_API_KEY` is configured. "
-                    "Media scanning will not work."
-                ),
-                inline=False
-            )
-
+            embed.add_field(name="⚠️ Warning", value="No `GEMINI_API_KEY` set in the bot's environment — this won't work yet.", inline=False)
         await ctx.send(embed=embed)
 
     @contentfilter.command(name="enable")
     async def contentfilter_enable(self, ctx: commands.Context):
-        await db.set_guild_config(
-            ctx.guild.id,
-            content_filter_enabled=1
-        )
+        await db.set_guild_config(ctx.guild.id, content_filter_enabled=1)
         await ctx.send("✅ Content filter enabled.")
 
     @contentfilter.command(name="disable")
     async def contentfilter_disable(self, ctx: commands.Context):
-        await db.set_guild_config(
-            ctx.guild.id,
-            content_filter_enabled=0
-        )
+        await db.set_guild_config(ctx.guild.id, content_filter_enabled=0)
         await ctx.send("Content filter disabled.")
 
     @contentfilter.command(name="logs")
-    @app_commands.describe(
-        channel="Channel to log flagged content in"
-    )
-    async def contentfilter_logs(
-        self,
-        ctx: commands.Context,
-        channel: discord.TextChannel
-    ):
-        await db.set_guild_config(
-            ctx.guild.id,
-            content_filter_log_channel_id=channel.id
-        )
-
-        await ctx.send(
-            f"Flagged content will be logged in {channel.mention}."
-        )
+    @app_commands.describe(channel="Channel to log flagged content in")
+    async def contentfilter_logs(self, ctx: commands.Context, channel: discord.TextChannel):
+        await db.set_guild_config(ctx.guild.id, content_filter_log_channel_id=channel.id)
+        await ctx.send(f"Flagged content will be logged in {channel.mention}.")
 
     @contentfilter.command(name="action")
-    @app_commands.describe(
-        action="delete, warn, timeout, or ban"
-    )
-    async def contentfilter_action(
-        self,
-        ctx: commands.Context,
-        action: str
-    ):
+    @app_commands.describe(action="What to do when content is flagged: delete, warn, timeout, or ban")
+    async def contentfilter_action(self, ctx: commands.Context, action: str):
         action = action.lower()
+        if action not in ("delete", "warn", "timeout", "ban"):
+            return await ctx.send("Action must be one of: delete, warn, timeout, ban")
+        await db.set_guild_config(ctx.guild.id, content_filter_action=action)
+        await ctx.send(f"Action on flagged content set to **{action}**.")
 
-        if action not in (
-            "delete",
-            "warn",
-            "timeout",
-            "ban"
-        ):
-            return await ctx.send(
-                "Action must be one of: "
-                "`delete`, `warn`, `timeout`, `ban`"
-            )
-
-        await db.set_guild_config(
-            ctx.guild.id,
-            content_filter_action=action
-        )
-
-        await ctx.send(
-            f"Action on flagged content set to **{action}**."
-        )
-
-    async def _classify(
-        self,
-        url: str,
-        mime_type: str
-    ):
-        if not self.session:
-            return None
-
+    async def _classify(self, url: str, mime_type: str):
         try:
-            async with self.session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-
+            async with self.session.get(url) as resp:
                 if resp.status != 200:
                     return None
-
                 data = await resp.read()
-
         except Exception:
             return None
 
-        # Don't pretend oversized files were scanned.
         if len(data) > MAX_FILE_BYTES:
-            return {
-                "flagged": False,
-                "category": "unscanned",
-                "reason": "File is larger than the configured scan limit."
-            }
-
-        encoded = base64.b64encode(data).decode("ascii")
+            return None  # too large to scan inline — skipped, not flagged
 
         payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": CLASSIFY_PROMPT
-                        },
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": encoded
-                            }
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "response_mime_type": "application/json",
-                "temperature": 0
-            }
+            "contents": [{
+                "parts": [
+                    {"text": CLASSIFY_PROMPT},
+                    {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(data).decode()}},
+                ]
+            }],
+            "generationConfig": {"response_mime_type": "application/json"},
         }
-
         try:
             async with self.session.post(
                 f"{GEMINI_URL}?key={GEMINI_API_KEY}",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=60)
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
-
                 if resp.status != 200:
                     return None
-
                 result = await resp.json()
-
         except Exception:
             return None
 
         try:
-            response_text = (
-                result["candidates"][0]
-                ["content"]["parts"][0]
-                ["text"]
-            )
-
-            parsed = json.loads(response_text)
-
-            # Normalize the result.
-            return {
-                "flagged": bool(parsed.get("flagged", False)),
-                "category": str(
-                    parsed.get("category", "none")
-                ),
-                "reason": str(
-                    parsed.get(
-                        "reason",
-                        "Flagged by content filter"
-                    )
-                )
-            }
-
-        except (
-            KeyError,
-            IndexError,
-            TypeError,
-            json.JSONDecodeError
-        ):
+            text = result["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(text)
+        except (KeyError, IndexError, json.JSONDecodeError):
             return None
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-
-        if (
-            message.author.bot
-            or message.guild is None
-            or not message.attachments
-            or not GEMINI_API_KEY
-        ):
+        if message.author.bot or message.guild is None or not message.attachments or not GEMINI_API_KEY:
             return
 
         row = await db.get_guild_config(message.guild.id)
-
         if not row["content_filter_enabled"]:
             return
 
-        attachments = message.attachments[
-            :MAX_ATTACHMENTS_PER_MESSAGE
-        ]
-
-        for attachment in attachments:
-
-            content_type = (
-                attachment.content_type or ""
-            ).lower()
-
-            # Discord doesn't always provide a content type,
-            # so fall back to the filename.
-            if not content_type:
-                filename = attachment.filename.lower()
-
-                if filename.endswith(
-                    (".jpg", ".jpeg", ".png", ".webp", ".gif")
-                ):
-                    content_type = "image/jpeg"
-
-                elif filename.endswith(
-                    (
-                        ".mp4",
-                        ".mov",
-                        ".webm",
-                        ".m4v",
-                        ".mpeg",
-                        ".mpg"
-                    )
-                ):
-                    content_type = "video/mp4"
-
-            if not (
-                content_type.startswith("image/")
-                or content_type.startswith("video/")
-            ):
+        for attachment in message.attachments:
+            content_type = attachment.content_type or ""
+            if not (content_type.startswith("image/") or content_type.startswith("video/")):
                 continue
 
-            result = await self._classify(
-                attachment.url,
-                content_type
-            )
-
-            if not result:
-                continue
-
-            if result.get("flagged"):
-
-                await self._take_action(
-                    message,
-                    row,
-                    result
-                )
-
+            result = await self._classify(attachment.url, content_type)
+            if result and result.get("flagged"):
+                await self._take_action(message, row, result)
                 break
 
-    async def _take_action(
-        self,
-        message: discord.Message,
-        row,
-        result: dict
-    ):
-
+    async def _take_action(self, message: discord.Message, row, result: dict):
         try:
             await message.delete()
         except discord.HTTPException:
             pass
 
-        action = (
-            row["content_filter_action"]
-            or "delete"
-        )
-
+        action = row["content_filter_action"] or "delete"
         member = message.author
+        category = result.get("category", "unknown")
+        reason = result.get("reason", "Flagged by content filter")
 
-        category = result.get(
-            "category",
-            "unknown"
-        )
-
-        reason = result.get(
-            "reason",
-            "Flagged by content filter"
-        )
-
-        # Warn
-        if (
-            action == "warn"
-            and isinstance(member, discord.Member)
-        ):
-            await db.add_warning(
-                message.guild.id,
-                member.id,
-                self.bot.user.id,
-                f"Content filter: {reason}"
-            )
-
-        # Timeout
-        elif (
-            action == "timeout"
-            and isinstance(member, discord.Member)
-        ):
+        if action == "warn" and isinstance(member, discord.Member):
+            await db.add_warning(message.guild.id, member.id, self.bot.user.id, f"Content filter: {reason}")
+        elif action == "timeout" and isinstance(member, discord.Member):
             try:
-                await member.timeout(
-                    datetime.timedelta(hours=1),
-                    reason=f"Content filter: {reason}"
-                )
+                await member.timeout(datetime.timedelta(hours=1), reason=f"Content filter: {reason}")
+            except discord.HTTPException:
+                pass
+        elif action == "ban" and isinstance(member, discord.Member):
+            try:
+                await message.guild.ban(member, reason=f"Content filter: {reason}")
             except discord.HTTPException:
                 pass
 
-        # Ban
-        elif (
-            action == "ban"
-            and isinstance(member, discord.Member)
-        ):
-            try:
-                await message.guild.ban(
-                    member,
-                    reason=f"Content filter: {reason}"
-                )
-            except discord.HTTPException:
-                pass
-
-        # Logging
-        log_channel_id = row[
-            "content_filter_log_channel_id"
-        ]
-
-        if log_channel_id:
-
-            channel = message.guild.get_channel(
-                log_channel_id
-            )
-
+        if row["content_filter_log_channel_id"]:
+            channel = message.guild.get_channel(row["content_filter_log_channel_id"])
             if channel:
-
                 embed = discord.Embed(
                     title="🚫 Content Filter Triggered",
                     description=(
-                        f"**User:** {member.mention}\n"
-                        f"**Category:** `{category}`\n"
-                        f"**Reason:** {reason}\n"
-                        f"**Action:** `{action}`"
+                        f"**User:** {member.mention}\n**Category:** {category}\n"
+                        f"**Reason:** {reason}\n**Action taken:** {action}"
                     ),
-                    color=discord.Color.red()
+                    color=discord.Color.red(),
                 )
-
                 try:
-                    await channel.send(
-                        embed=embed
-                    )
+                    await channel.send(embed=embed)
                 except discord.HTTPException:
                     pass
 
