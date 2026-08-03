@@ -13,11 +13,59 @@ log = logging.getLogger("bleedclone.games")
 # ==================== Black Tea (word bomb game) ====================
 
 TRIGRAMS = [
-    "ing", "ate", "est", "ent", "ers", "ove", "ake", "ind", "ost", "and",
-    "ear", "ide", "ock", "all", "ant", "art", "ase", "ath", "eat", "eek",
-    "eer", "ell", "elt", "eme", "ene", "ill", "ine", "ink", "ion", "ish",
-    "ist", "ite", "old", "one", "ood", "ool", "oon", "oot", "orn", "ory",
-    "ose", "oud", "our", "ous", "own", "ude", "ure", "ame", "ave", "ace",
+    # -ing / -tion / -ment / common suffix families
+    "ing", "ion", "tio", "ent", "ers", "est", "ate", "ess", "ess", "ive",
+    "ous", "ful", "les", "led", "ing", "ism", "ist", "ity", "ize", "ise",
+    "ant", "ent", "shp", "hod", "ard", "ise", "abl", "ibl", "ang", "ung",
+    # common word chunks / infixes
+    "and", "the", "ere", "her", "his", "was", "for", "not", "you", "all",
+    "are", "but", "out", "our", "day", "get", "has", "him", "how", "man",
+    "new", "now", "old", "see", "two", "way", "who", "boy", "did", "its",
+    "let", "put", "say", "she", "too", "use", "own", "any", "few", "got",
+    "act", "add", "age", "ago", "aid", "air", "arm", "art", "ash", "ask",
+    "bad", "bag", "ban", "bar", "bat", "bay", "bed", "bee", "beg", "bet",
+    "bid", "big", "bit", "box", "bug", "bun", "bus", "buy", "cab", "cap",
+    "car", "cat", "cop", "cow", "cry", "cup", "cut", "dad", "dam", "den",
+    "dig", "dim", "dip", "dog", "dot", "dry", "due", "ear", "eat", "egg",
+    "elk", "end", "eye", "fan", "far", "fat", "fee", "fig", "fin", "fit",
+    "fix", "fly", "fog", "fox", "fun", "gap", "gas", "gem", "gun", "gym",
+    "ham", "hat", "hay", "hen", "hip", "hit", "hop", "hot", "hut", "ice",
+    "ink", "inn", "ivy", "jam", "jar", "jaw", "jet", "job", "jog", "joy",
+    "key", "kid", "kit", "lab", "lap", "law", "lay", "leg", "lid", "lip",
+    "log", "lot", "low", "mad", "map", "mat", "mix", "mud", "mug", "nap",
+    "net", "nut", "oak", "oil", "opt", "orb", "owe", "owl", "pad", "pan",
+    "paw", "pay", "pea", "peg", "pen", "pet", "pie", "pig", "pin", "pit",
+    "pop", "pot", "pub", "pun", "pup", "rag", "ram", "rat", "raw", "ray",
+    "rib", "rim", "rip", "rob", "rod", "row", "rub", "rug", "rum", "run",
+    "sad", "sap", "sat", "saw", "sea", "set", "sew", "shy", "sin", "sip",
+    "sit", "six", "ski", "sky", "sly", "sob", "sod", "son", "sow", "spa",
+    "spy", "sum", "sun", "tab", "tag", "tan", "tap", "tar", "tax", "tea",
+    "ten", "tie", "tin", "tip", "toe", "top", "toy", "try", "tub", "tug",
+    "van", "vat", "vet", "vow", "wag", "wax", "web", "wed", "wet", "wig",
+    "win", "wit", "wow", "yak", "yam", "yes", "yet", "you", "zip", "zoo",
+    # longer/common English chunks that appear in many words
+    "ock", "old", "one", "ood", "ool", "oon", "oot", "orn", "ory", "ose",
+    "oud", "our", "own", "ude", "ure", "ame", "ave", "ace", "ade", "age",
+    "ail", "ain", "air", "ake", "ale", "alk", "all", "and", "ang", "ank",
+    "ant", "ape", "arb", "arc", "ard", "are", "ark", "arm", "art", "ash",
+    "ask", "ass", "ast", "ate", "ath", "aut", "awn", "ays", "aze", "eal",
+    "ean", "ear", "eat", "eck", "eed", "eek", "eel", "eem", "een", "eep",
+    "eer", "ees", "eet", "eft", "egg", "eld", "elf", "ell", "elt", "elp",
+    "eme", "emp", "end", "ene", "ent", "eon", "erb", "erd", "erk", "erm",
+    "ern", "err", "ert", "erv", "esh", "ess", "est", "eve", "ewd", "ewn",
+    "ewy", "exp", "eye", "ick", "ide", "ift", "ign", "ike", "ild", "ile",
+    "ilk", "ill", "ilt", "imb", "ime", "imp", "nch", "ind", "ine", "ing",
+    "ink", "int", "ipe", "ird", "irl", "irm", "irt", "ish", "isk", "isl",
+    "iss", "ist", "ite", "ith", "itt", "ive", "ize", "obe", "ock", "odd",
+    "ode", "off", "oft", "oil", "oke", "old", "ole", "olt", "omb", "ome",
+    "omp", "ond", "one", "ong", "ony", "ood", "oof", "ook", "ool", "oom",
+    "oon", "oop", "oor", "oot", "ope", "orb", "orc", "ord", "ore", "ork",
+    "orm", "orn", "ort", "ory", "ose", "osh", "oss", "ost", "ote", "oth",
+    "oud", "oul", "oun", "our", "out", "ove", "owl", "own", "ows", "uce",
+    "uck", "uct", "ude", "uff", "uge", "ugg", "uid", "uil", "uke", "ule",
+    "ulk", "ull", "ult", "umb", "ump", "und", "urk", "une", "ung", "unk",
+    "unt", "urb", "urd", "ure", "url", "urn", "url", "use", "ush", "usk",
+    "ust", "ute", "uth", "uzz",
 ]
 
 
@@ -210,6 +258,40 @@ LANDMARKS = [
 ]
 
 
+def flag_emoji(iso_code: str) -> str:
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in iso_code.upper())
+
+
+# Maps a guessable country name/alias (lowercase) to its ISO 3166-1 alpha-2
+# code, used to show a flag next to ANY guess, right or wrong.
+COUNTRY_CODES = {
+    "france": "FR", "china": "CN", "brazil": "BR", "india": "IN", "australia": "AU",
+    "uk": "GB", "united kingdom": "GB", "england": "GB", "britain": "GB", "scotland": "GB",
+    "usa": "US", "united states": "US", "america": "US", "italy": "IT", "peru": "PE",
+    "uae": "AE", "united arab emirates": "AE", "dubai": "AE", "jordan": "JO", "mexico": "MX",
+    "japan": "JP", "germany": "DE", "greece": "GR", "south africa": "ZA", "canada": "CA",
+    "cambodia": "KH", "russia": "RU", "spain": "ES", "portugal": "PT", "netherlands": "NL",
+    "egypt": "EG", "turkey": "TR", "thailand": "TH", "vietnam": "VN", "indonesia": "ID",
+    "south korea": "KR", "korea": "KR", "north korea": "KP", "argentina": "AR", "chile": "CL",
+    "colombia": "CO", "nigeria": "NG", "kenya": "KE", "morocco": "MA", "saudi arabia": "SA",
+    "israel": "IL", "iran": "IR", "iraq": "IQ", "pakistan": "PK", "bangladesh": "BD",
+    "philippines": "PH", "malaysia": "MY", "singapore": "SG", "new zealand": "NZ",
+    "ireland": "IE", "sweden": "SE", "norway": "NO", "denmark": "DK", "finland": "FI",
+    "poland": "PL", "ukraine": "UA", "switzerland": "CH", "austria": "AT", "belgium": "BE",
+    "czech republic": "CZ", "hungary": "HU", "romania": "RO", "croatia": "HR", "iceland": "IS",
+    "cuba": "CU", "jamaica": "JM", "ecuador": "EC", "venezuela": "VE", "bolivia": "BO",
+    "uruguay": "UY", "paraguay": "PY", "panama": "PA", "costa rica": "CR", "guatemala": "GT",
+    "ethiopia": "ET", "ghana": "GH", "algeria": "DZ", "tunisia": "TN", "libya": "LY",
+    "sri lanka": "LK", "nepal": "NP", "myanmar": "MM", "laos": "LA", "mongolia": "MN",
+    "kazakhstan": "KZ", "afghanistan": "AF", "syria": "SY", "lebanon": "LB", "qatar": "QA",
+    "kuwait": "KW", "oman": "OM", "yemen": "YE", "georgia": "GE", "armenia": "AM",
+    "azerbaijan": "AZ", "belarus": "BY", "serbia": "RS", "slovakia": "SK", "slovenia": "SI",
+    "bulgaria": "BG", "estonia": "EE", "latvia": "LV", "lithuania": "LT", "luxembourg": "LU",
+    "malta": "MT", "cyprus": "CY", "monaco": "MC", "andorra": "AD", "liechtenstein": "LI",
+    "vatican": "VA", "san marino": "SM",
+}
+
+
 class Games(commands.Cog):
     """Black Tea, Tic-Tac-Toe, and GeoGuess mini-games."""
 
@@ -310,7 +392,7 @@ class Games(commands.Cog):
             pool = LANDMARKS.copy()
             random.shuffle(pool)
 
-            await ctx.send("🌍 **GeoGuess** starting — 5 rounds, guess the **country** shown in each photo!")
+            await ctx.send("🌍 **GeoGuess** starting — 5 rounds, guess the **country** shown in each photo! Everyone has **20 seconds** per round.")
 
             rounds_played = 0
             for title, country, aliases in pool:
@@ -321,22 +403,59 @@ class Games(commands.Cog):
                     continue
                 rounds_played += 1
 
-                embed = discord.Embed(title=f"Round {rounds_played}/5", description="Where is this?", color=discord.Color.green())
+                embed = discord.Embed(title=f"Round {rounds_played}/5 — Where is this?", color=discord.Color.green())
                 embed.set_image(url=image_url)
-                await ctx.send(embed=embed)
+                embed.add_field(name="Guesses", value="*Waiting for guesses...*", inline=False)
+                round_message = await ctx.send(embed=embed)
 
                 valid_answers = {country.lower()} | {a.lower() for a in aliases}
+                guess_lines: list[str] = []
+                correct_this_round: list[discord.Member] = []
+                seen_correct: set[int] = set()
 
-                def check(m, valid_answers=valid_answers):
-                    return m.channel.id == ctx.channel.id and not m.author.bot and m.content.lower().strip() in valid_answers
+                def check(m):
+                    return m.channel.id == ctx.channel.id and not m.author.bot and m.content.strip()
 
-                try:
-                    msg = await self.bot.wait_for("message", check=check, timeout=20)
-                    scores[msg.author.id] = scores.get(msg.author.id, 0) + points_per_round
-                    names[msg.author.id] = msg.author.display_name
-                    await ctx.send(f"✅ {msg.author.mention} got it! It was **{country}**. (+{points_per_round} points)")
-                except asyncio.TimeoutError:
-                    await ctx.send(f"⏱️ Time's up! It was **{country}**.")
+                loop = asyncio.get_event_loop()
+                end_time = loop.time() + 20
+                no_ping = discord.AllowedMentions(users=False)
+
+                while True:
+                    remaining = end_time - loop.time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        msg = await self.bot.wait_for("message", check=check, timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+
+                    guess_text = msg.content.strip()
+                    guess_lower = guess_text.lower()
+                    is_correct = guess_lower in valid_answers
+                    iso = COUNTRY_CODES.get(guess_lower)
+                    flag = flag_emoji(iso) + " " if iso else ""
+
+                    line = f"{flag}{msg.author.mention}: {guess_text}"
+                    if is_correct:
+                        line += " ✅"
+                        if msg.author.id not in seen_correct:
+                            seen_correct.add(msg.author.id)
+                            correct_this_round.append(msg.author)
+                            scores[msg.author.id] = scores.get(msg.author.id, 0) + points_per_round
+                            names[msg.author.id] = msg.author.display_name
+                    guess_lines.append(line)
+
+                    embed.set_field_at(0, name="Guesses", value="\n".join(guess_lines[-15:]), inline=False)
+                    try:
+                        await round_message.edit(embed=embed, allowed_mentions=no_ping)
+                    except discord.HTTPException:
+                        pass
+
+                if correct_this_round:
+                    mentions = ", ".join(p.mention for p in correct_this_round)
+                    await ctx.send(f"⏱️ Round over! It was **{country}**. Correct: {mentions} (+{points_per_round} each)", allowed_mentions=no_ping)
+                else:
+                    await ctx.send(f"⏱️ Round over! No one got it — it was **{country}**.")
 
             if rounds_played == 0:
                 return await ctx.send("Couldn't load any location images right now — try again in a bit.")
