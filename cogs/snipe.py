@@ -1,3 +1,4 @@
+import os
 import time
 from collections import defaultdict, deque
 
@@ -94,10 +95,16 @@ class Snipe(commands.Cog):
     @app_commands.describe(amount="How many recent messages to scan (default 50, max 200)")
     async def clear_bot_messages(self, ctx: commands.Context, amount: commands.Range[int, 1, 200] = 50):
         row = await db.get_guild_config(ctx.guild.id)
-        prefix = row["prefix"]
+        default_prefix = os.getenv("DEFAULT_PREFIX", ",")
+        prefixes = {row["prefix"], default_prefix}
+        mention_prefixes = (f"<@{self.bot.user.id}>", f"<@!{self.bot.user.id}>")
 
         def is_bot_or_command(m: discord.Message) -> bool:
-            return m.author.bot or m.content.startswith(prefix)
+            if m.author.bot:
+                return True
+            if m.content.startswith(mention_prefixes):
+                return True
+            return any(m.content.startswith(p) for p in prefixes if p)
 
         if ctx.interaction:
             await ctx.interaction.response.defer(ephemeral=True)
