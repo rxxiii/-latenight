@@ -305,6 +305,11 @@ CREATE TABLE IF NOT EXISTS blacklist (
     reason TEXT,
     added_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS permitted_users (
+    user_id INTEGER PRIMARY KEY,
+    added_at INTEGER
+);
 """
 
 
@@ -1234,6 +1239,27 @@ class Database:
 
     async def blacklist_list(self):
         cur = await self.conn.execute("SELECT * FROM blacklist")
+        return await cur.fetchall()
+
+    # ---------- permitted users (lockdown mode) ----------
+
+    async def permit_add(self, user_id, added_at):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO permitted_users (user_id, added_at) VALUES (?, ?)",
+            (user_id, added_at),
+        )
+        await self.conn.commit()
+
+    async def permit_remove(self, user_id):
+        await self.conn.execute("DELETE FROM permitted_users WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+
+    async def permit_check(self, user_id):
+        cur = await self.conn.execute("SELECT 1 FROM permitted_users WHERE user_id = ?", (user_id,))
+        return (await cur.fetchone()) is not None
+
+    async def permit_list(self):
+        cur = await self.conn.execute("SELECT * FROM permitted_users")
         return await cur.fetchall()
 
 

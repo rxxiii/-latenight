@@ -70,6 +70,7 @@ class BleedClone(commands.Bot):
             "cogs.snipe",
             "cogs.blacklist",
             "cogs.content_filter",
+            "cogs.lockdown",
             "cogs.core",
         ):
             try:
@@ -110,6 +111,9 @@ class BleedClone(commands.Bot):
         from cogs.blacklist import Blacklisted
         if isinstance(error, Blacklisted):
             return await ctx.send(f"You're blacklisted from using this bot. Reason: {error}")
+        from cogs.lockdown import NotPermitted
+        if isinstance(error, NotPermitted):
+            return await ctx.send("This bot is currently restricted to its owner and permitted users.")
         if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
             return await ctx.send("You don't have permission to use this command.")
         if isinstance(error, commands.BotMissingPermissions):
