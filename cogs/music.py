@@ -27,7 +27,7 @@ YDL_OPTS = {
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    "options": "-vn -ar 48000 -ac 2 -b:a 192k",
 }
 
 
@@ -45,11 +45,13 @@ class GuildMusicState:
         self.loop_mode = "off"  # off, queue, current
         self.current: Track | None = None
         self.voice_client: discord.VoiceClient | None = None
+        self.volume = 1.0  # 1.0 = 100%
+        self.audio_source: discord.PCMVolumeTransformer | None = None
 
 
 class Music(commands.Cog):
     """Play music in a voice channel via YouTube search or a Spotify link
-    (Spotify links are resolved to track info only â actual audio always
+    (Spotify links are resolved to track info only — actual audio always
     streams from YouTube, since Spotify audio itself can't be extracted)."""
 
     def __init__(self, bot: commands.Bot):
@@ -94,14 +96,34 @@ class Music(commands.Cog):
         self._spotify_token_expires = time.time() + data.get("expires_in", 3600) - 60
         return self._spotify_token
 
+    async def _resolve_spotify_oembed(self, url: str):
+        """Keyless lookup that works for a single track link — no API credentials needed."""
+        try:
+            async with self.session.get(
+                "https://open.spotify.com/oembed", params={"url": url}
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+        except Exception:
+            return None
+        return data.get("title")
+
     async def _resolve_spotify(self, url: str) -> list[str]:
         """Returns 'title artist' search strings for a Spotify track/playlist/album link."""
+        track_match = SPOTIFY_TRACK_RE.search(url)
+
+        # Single tracks: try the free, keyless oEmbed lookup first.
+        if track_match:
+            title = await self._resolve_spotify_oembed(url)
+            if title:
+                return [title]
+
         token = await self._get_spotify_token()
         if token is None:
             return []
         headers = {"Authorization": f"Bearer {token}"}
 
-        track_match = SPOTIFY_TRACK_RE.search(url)
         if track_match:
             try:
                 async with self.session.get(
@@ -183,7 +205,10 @@ class Music(commands.Cog):
         if state.voice_client is None or not state.voice_client.is_connected():
             return
 
-        source = discord.FFmpegPCMAudio(next_track.stream_url, **FFMPEG_OPTIONS)
+        source = discord.PCMVolumeTransformer(
+            discord.FFmpegPCMAudio(next_track.stream_url, **FFMPEG_OPTIONS), volume=state.volume
+        )
+        state.audio_source = source
 
         def after_playing(error):
             fut = asyncio.run_coroutine_threadsafe(self._play_next(guild), self.bot.loop)
@@ -203,6 +228,14 @@ class Music(commands.Cog):
         state = self.get_state(ctx.guild.id)
         if state.voice_client is None or not state.voice_client.is_connected():
             state.voice_client = await ctx.author.voice.channel.connect()
+            try:
+                # Discord's default voice encoder bitrate is fairly low (64kbps) —
+                # bump it up for noticeably better music quality, capped to what
+                # the channel itself allows (boosted servers allow higher).
+                channel_max = ctx.author.voice.channel.bitrate or 96000
+                state.voice_client.encoder.bitrate = min(channel_max, 192000) // 1000
+            except Exception:
+                pass
 
         if ctx.interaction:
             await ctx.interaction.response.defer()
@@ -211,7 +244,7 @@ class Music(commands.Cog):
             queries = await self._resolve_spotify(query)
             if not queries:
                 return await ctx.send(
-                    "Couldn't read that Spotify link â make sure `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` "
+                    "Couldn't read that Spotify link — make sure `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` "
                     "are set, or the link might be invalid/private."
                 )
         else:
@@ -229,9 +262,9 @@ class Music(commands.Cog):
             return await ctx.send("Couldn't find anything to play for that.")
 
         if len(added) == 1:
-            await ctx.send(f"ðµ Queued **{added[0].title}**")
+            await ctx.send(f"🎵 Queued **{added[0].title}**")
         else:
-            await ctx.send(f"ðµ Queued **{len(added)}** tracks.")
+            await ctx.send(f"🎵 Queued **{len(added)}** tracks.")
 
         if not state.voice_client.is_playing() and state.current is None:
             await self._play_next(ctx.guild)
@@ -241,7 +274,7 @@ class Music(commands.Cog):
         state = self.get_state(ctx.guild.id)
         if state.voice_client and state.voice_client.is_playing():
             state.voice_client.stop()
-            await ctx.send("â­ï¸ Skipped.")
+            await ctx.send("⏭️ Skipped.")
         else:
             await ctx.send("Nothing is playing.")
 
@@ -254,7 +287,7 @@ class Music(commands.Cog):
         if state.voice_client:
             await state.voice_client.disconnect()
             state.voice_client = None
-        await ctx.send("ð Disconnected.")
+        await ctx.send("👋 Disconnected.")
 
     @commands.hybrid_command(name="repeat", aliases=["loop"], description="Change the current loop mode.")
     @app_commands.describe(option="off, queue, or current")
@@ -264,7 +297,16 @@ class Music(commands.Cog):
             return await ctx.send("Option must be one of: `off`, `queue`, `current`")
         state = self.get_state(ctx.guild.id)
         state.loop_mode = option
-        await ctx.send(f"ð Loop mode set to **{option}**.")
+        await ctx.send(f"🔁 Loop mode set to **{option}**.")
+
+    @commands.hybrid_command(name="volume", aliases=["vol"], description="Set playback volume (0-200%).")
+    @app_commands.describe(percent="Volume percentage, 0-200 (100 = normal)")
+    async def volume(self, ctx: commands.Context, percent: commands.Range[int, 0, 200]):
+        state = self.get_state(ctx.guild.id)
+        state.volume = percent / 100
+        if state.audio_source:
+            state.audio_source.volume = state.volume
+        await ctx.send(f"🔊 Volume set to **{percent}%**.")
 
     @commands.hybrid_command(name="queue", description="Show the current queue.")
     async def queue_cmd(self, ctx: commands.Context):
