@@ -196,21 +196,63 @@ class Moderation(commands.Cog):
 
     # ---------- lock / unlock / slowmode ----------
 
-    @commands.hybrid_command(name="lock", description="Lock the current channel (deny @everyone Send Messages).")
+    @commands.hybrid_command(name="lock", description="Lock the current channel, or every channel with 'all' (deny @everyone Send Messages).")
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
-    async def lock(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        channel = channel or ctx.channel
+    @app_commands.describe(target="A channel to lock, 'all' to lock every channel, or leave blank for this channel")
+    async def lock(self, ctx: commands.Context, target: str = None):
+        if target and target.lower() == "all":
+            count = 0
+            for channel in ctx.guild.text_channels:
+                overwrite = channel.overwrites_for(ctx.guild.default_role)
+                if overwrite.send_messages is False:
+                    continue
+                overwrite.send_messages = False
+                try:
+                    await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+                    count += 1
+                except discord.HTTPException:
+                    pass
+            return await ctx.send(f"🔒 Locked {count} channel(s).")
+
+        channel = ctx.channel
+        if target:
+            try:
+                channel = await commands.TextChannelConverter().convert(ctx, target)
+            except commands.BadArgument:
+                return await ctx.send(f"Couldn't find a channel matching `{target}`.")
+
         overwrite = channel.overwrites_for(ctx.guild.default_role)
         overwrite.send_messages = False
         await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
         await ctx.send(f"🔒 Locked {channel.mention}.")
 
-    @commands.hybrid_command(name="unlock", description="Unlock the current channel.")
+    @commands.hybrid_command(name="unlock", description="Unlock the current channel, or every channel with 'all'.")
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
-    async def unlock(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        channel = channel or ctx.channel
+    @app_commands.describe(target="A channel to unlock, 'all' to unlock every channel, or leave blank for this channel")
+    async def unlock(self, ctx: commands.Context, target: str = None):
+        if target and target.lower() == "all":
+            count = 0
+            for channel in ctx.guild.text_channels:
+                overwrite = channel.overwrites_for(ctx.guild.default_role)
+                if overwrite.send_messages is not False:
+                    continue
+                overwrite.send_messages = None
+                try:
+                    await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+                    count += 1
+                except discord.HTTPException:
+                    pass
+            return await ctx.send(f"🔓 Unlocked {count} channel(s).")
+
+        channel = ctx.channel
+        if target:
+            try:
+                channel = await commands.TextChannelConverter().convert(ctx, target)
+            except commands.BadArgument:
+                return await ctx.send(f"Couldn't find a channel matching `{target}`.")
+
         overwrite = channel.overwrites_for(ctx.guild.default_role)
         overwrite.send_messages = None
         await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
@@ -240,6 +282,41 @@ class Moderation(commands.Cog):
         await channel.delete(reason=f"Nuked by {ctx.author}")
         embed = discord.Embed(title="💥 Channel Nuked", description="This channel has been cleared.", color=discord.Color.red())
         await new_channel.send(embed=embed)
+
+    # ---------- fix server ----------
+
+    @commands.hybrid_group(name="fix", invoke_without_command=True)
+    @commands.has_permissions(administrator=True)
+    async def fix(self, ctx: commands.Context):
+        await ctx.send_help(ctx.command)
+
+    @fix.command(name="server", description="Disable threads, activities, application commands, and external apps across every channel.")
+    @commands.has_permissions(administrator=True)
+    @commands.bot_has_permissions(manage_channels=True, manage_roles=True)
+    async def fix_server(self, ctx: commands.Context):
+        count = 0
+        for channel in ctx.guild.channels:
+            if not isinstance(channel, (
+                discord.TextChannel, discord.VoiceChannel, discord.StageChannel,
+                discord.ForumChannel, discord.CategoryChannel,
+            )):
+                continue
+            overwrite = channel.overwrites_for(ctx.guild.default_role)
+            overwrite.create_public_threads = False
+            overwrite.create_private_threads = False
+            overwrite.send_messages_in_threads = False
+            overwrite.use_application_commands = False
+            overwrite.use_embedded_activities = False
+            overwrite.use_external_apps = False
+            try:
+                await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+                count += 1
+            except discord.HTTPException:
+                pass
+        await ctx.send(
+            f"🔧 Server fixed — threads, activities, application commands, and external apps "
+            f"disabled across {count} channel(s)."
+        )
 
 
 async def setup(bot: commands.Bot):

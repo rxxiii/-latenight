@@ -255,6 +255,54 @@ LANDMARKS = [
     ("Angkor_Wat", "Cambodia", ["cambodia"]),
     ("Red_Square", "Russia", ["russia"]),
     ("Golden_Gate_Bridge", "United States", ["usa", "united states", "america"]),
+    ("Sagrada_Família", "Spain", ["spain"]),
+    ("Leaning_Tower_of_Pisa", "Italy", ["italy"]),
+    ("Stonehenge", "United Kingdom", ["uk", "united kingdom", "england", "britain"]),
+    ("Mount_Rushmore", "United States", ["usa", "united states", "america"]),
+    ("Niagara_Falls", "Canada", ["canada"]),
+    ("Great_Sphinx_of_Giza", "Egypt", ["egypt"]),
+    ("Hagia_Sophia", "Turkey", ["turkey"]),
+    ("Blue_Mosque", "Turkey", ["turkey"]),
+    ("Forbidden_City", "China", ["china"]),
+    ("Potala_Palace", "China", ["china"]),
+    ("Mount_Kilimanjaro", "Tanzania", ["tanzania"]),
+    ("Victoria_Falls", "Zambia", ["zambia"]),
+    ("Uluru", "Australia", ["australia"]),
+    ("Great_Barrier_Reef", "Australia", ["australia"]),
+    ("Moai", "Chile", ["chile"]),
+    ("Salar_de_Uyuni", "Bolivia", ["bolivia"]),
+    ("Iguazu_Falls", "Argentina", ["argentina"]),
+    ("Perito_Moreno_Glacier", "Argentina", ["argentina"]),
+    ("Amsterdam", "Netherlands", ["netherlands"]),
+    ("Brandenburg_Gate", "Germany", ["germany"]),
+    ("Charles_Bridge", "Czech Republic", ["czech republic", "czechia"]),
+    ("Prague_Castle", "Czech Republic", ["czech republic", "czechia"]),
+    ("Buckingham_Palace", "United Kingdom", ["uk", "united kingdom", "england", "britain"]),
+    ("Edinburgh_Castle", "United Kingdom", ["uk", "united kingdom", "scotland"]),
+    ("Cliffs_of_Moher", "Ireland", ["ireland"]),
+    ("Trolltunga", "Norway", ["norway"]),
+    ("Geirangerfjord", "Norway", ["norway"]),
+    ("Little_Mermaid_(statue)", "Denmark", ["denmark"]),
+    ("Matterhorn", "Switzerland", ["switzerland"]),
+    ("Schönbrunn_Palace", "Austria", ["austria"]),
+    ("Wat_Arun", "Thailand", ["thailand"]),
+    ("Grand_Palace", "Thailand", ["thailand"]),
+    ("Ha_Long_Bay", "Vietnam", ["vietnam"]),
+    ("Borobudur", "Indonesia", ["indonesia"]),
+    ("Petronas_Towers", "Malaysia", ["malaysia"]),
+    ("Marina_Bay_Sands", "Singapore", ["singapore"]),
+    ("Gyeongbokgung", "South Korea", ["south korea", "korea"]),
+    ("Pyramids_of_Giza", "Egypt", ["egypt"]),
+    ("Jerusalem", "Israel", ["israel"]),
+    ("Dome_of_the_Rock", "Israel", ["israel"]),
+    ("Alhambra", "Spain", ["spain"]),
+    ("Park_Güell", "Spain", ["spain"]),
+    ("Christ_of_the_Abyss", "Italy", ["italy"]),
+    ("Venice", "Italy", ["italy"]),
+    ("Mount_Vesuvius", "Italy", ["italy"]),
+    ("Notre-Dame_de_Paris", "France", ["france"]),
+    ("Mont_Saint-Michel", "France", ["france"]),
+    ("Palace_of_Versailles", "France", ["france"]),
 ]
 
 
@@ -459,6 +507,11 @@ class Games(commands.Cog):
                     await ctx.send(f"⏱️ Round over! It was **{country}**. Correct: {mentions} (+{points_per_round} each)", allowed_mentions=no_ping)
                 else:
                     await ctx.send(f"⏱️ Round over! No one got it — it was **{country}**.")
+
+                if scores and rounds_played < 5:
+                    standings = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+                    lines = [f"{i + 1}. {names[uid]} — {pts} pts" for i, (uid, pts) in enumerate(standings[:5])]
+                    await ctx.send("**Scoreboard so far:**\n" + "\n".join(lines))
 
             if rounds_played == 0:
                 return await ctx.send("Couldn't load any location images right now — try again in a bit.")

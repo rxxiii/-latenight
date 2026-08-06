@@ -119,6 +119,17 @@ class Utility(commands.Cog):
         embed.set_image(url=user.banner.url)
         await ctx.send(embed=embed)
 
+    @commands.hybrid_command(name="sbanner", description="Show a member's server-specific banner, if they have one.")
+    @app_commands.describe(member="Member to look up (defaults to you)")
+    async def server_banner(self, ctx: commands.Context, member: discord.Member = None):
+        member = member or ctx.author
+        guild_banner = getattr(member, "guild_banner", None)
+        if guild_banner is None:
+            return await ctx.send(f"**{member}** doesn't have a server-specific banner set here.")
+        embed = discord.Embed(title=f"{member}'s server banner", color=discord.Color.blurple())
+        embed.set_image(url=guild_banner.url)
+        await ctx.send(embed=embed)
+
     # ---------- role management ----------
 
     @commands.hybrid_group(name="role", aliases=["r"], invoke_without_command=True)
