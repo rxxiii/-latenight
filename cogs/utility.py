@@ -145,12 +145,19 @@ class Utility(commands.Cog):
             return await ctx.send(error)
         if found_role.position >= ctx.guild.me.top_role.position:
             return await ctx.send("That role is higher than or equal to my own top role — I can't manage it.")
+        no_role_ping = discord.AllowedMentions(roles=False)
         if found_role in member.roles:
             await member.remove_roles(found_role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(f"Removed {found_role.mention} from {member.mention}.")
+            await ctx.send(
+                f"➖ {ctx.author.mention}: Removed {found_role.mention} from {member.mention}",
+                allowed_mentions=no_role_ping,
+            )
         else:
             await member.add_roles(found_role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(f"Gave {found_role.mention} to {member.mention}.")
+            await ctx.send(
+                f"➕ {ctx.author.mention}: Added {found_role.mention} to {member.mention}",
+                allowed_mentions=no_role_ping,
+            )
 
     @role.command(name="create")
     @app_commands.describe(name="Name for the new role", color="Hex color, e.g. #ff0000 (optional)")

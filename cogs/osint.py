@@ -1,23 +1,29 @@
 """
-Public-data lookup commands: Roblox username info, DNS resolution, and
-public IP geolocation. Everything here queries public, non-sensitive data
-(Roblox's own public API, standard DNS, and public IP geolocation) — no
-breach data, credentials, or private personal information.
+Public-data lookup commands: Roblox profile lookup + multi-platform username
+search, DNS resolution, public IP geolocation, and Instagram/TikTok public
+stats. Everything here queries public data only (official public APIs where
+they exist, and public profile pages otherwise) — no breach data,
+credentials, or private personal information.
 
 Commands:
-    ,osint username <username>
-    ,osint domain <domain>
-    ,osint ip <ip>
-    ,roblox <discord_id>   (placeholder — see note below)
+    ,username <name>            -> rich Roblox profile lookup
+    ,username hunter <name>     -> checks the name across several platforms
+    ,domain lookup <domain>
+    ,ip lookup <ip>
+    ,instagram <username>
+    ,tiktok <username>
 
-The ,roblox command reads from an in-memory link table that nothing in
-this file populates. It's a placeholder for a future verification flow
-where a user proves they own a Roblox account (e.g. via a bio/status code
-challenge) before being linked — until that's built, it will always report
-"no account linked."
+Note on reliability: Instagram/TikTok/X/LinkedIn/Facebook don't offer free
+public APIs, so those commands read data straight off the public profile
+page. That's inherently fragile — those sites change their page structure
+over time and sometimes block non-browser requests — so expect occasional
+breakage there in a way the official-API-backed commands (Roblox, GitHub,
+domain/IP) won't have.
 """
 
+import asyncio
 import ipaddress
+import json
 import re
 import socket
 from urllib.parse import urlparse
@@ -27,15 +33,33 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+}
+
+# platform name -> (profile URL template, whether a 2xx status reliably means "found")
+HUNTER_PLATFORMS = {
+    "YouTube": ("https://www.youtube.com/@{u}", True),
+    "Instagram": ("https://www.instagram.com/{u}/", True),
+    "X": ("https://x.com/{u}", False),  # X blocks non-browser requests inconsistently
+    "GitHub": ("https://github.com/{u}", True),
+    "BandLab": ("https://www.bandlab.com/{u}", True),
+    "TikTok": ("https://www.tiktok.com/@{u}", True),
+    "LinkedIn": ("https://www.linkedin.com/in/{u}", False),  # usually login-walled regardless
+    "Facebook": ("https://www.facebook.com/{u}", False),  # usually login-walled regardless
+}
+
 
 class OSINT(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.roblox_links: dict[int, dict] = {}  # {discord_id: roblox_user_dict}
         self.session: aiohttp.ClientSession | None = None
 
     async def cog_load(self):
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10), headers=BROWSER_HEADERS)
 
     async def cog_unload(self):
         if self.session:
@@ -48,44 +72,130 @@ class OSINT(commands.Cog):
         async with self.session.get(url) as r:
             return r.status, await r.json(content_type=None)
 
-    @commands.hybrid_group(name="osint", invoke_without_command=True)
-    async def osint(self, ctx: commands.Context):
-        await ctx.send(
-            "Usage: `,osint username <username>`, "
-            "`,osint domain <domain>`, or `,osint ip <ip>`"
-        )
+    # ==================== username / roblox ====================
 
-    @osint.command(name="username", description="Look up a public Roblox username.")
+    @commands.hybrid_group(name="username", invoke_without_command=True, description="Look up a Roblox profile by username.")
     @commands.cooldown(3, 10, commands.BucketType.user)
-    @app_commands.describe(username="Roblox username to look up")
-    async def osint_username(self, ctx: commands.Context, *, username: str):
-        username = username.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
+    @app_commands.describe(name="Roblox username to look up")
+    async def username(self, ctx: commands.Context, *, name: str):
+        name = name.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", name):
             return await ctx.send("Invalid Roblox username.")
 
         status, data = await self._json(
             "https://users.roblox.com/v1/usernames/users",
             method="POST",
-            payload={"usernames": [username], "excludeBannedUsers": False},
+            payload={"usernames": [name], "excludeBannedUsers": False},
         )
-
         if status != 200 or not data.get("data"):
             return await ctx.send("No Roblox user found.")
 
         user = data["data"][0]
         uid = user["id"]
 
-        embed = discord.Embed(title="Roblox User", color=discord.Color.blurple())
-        embed.add_field(name="Username", value=user.get("name", "Unknown"))
-        embed.add_field(name="Display name", value=user.get("displayName", "Unknown"))
-        embed.add_field(name="User ID", value=str(uid))
+        embed = discord.Embed(title=f"{user.get('displayName', name)} (@{user.get('name', name)})", color=discord.Color.blurple())
+
+        try:
+            status2, details = await self._json(f"https://users.roblox.com/v1/users/{uid}")
+            if status2 == 200:
+                created = details.get("created", "")[:10]
+                embed.add_field(name="Created", value=created or "Unknown")
+        except Exception:
+            pass
+
+        try:
+            status3, badges = await self._json(f"https://accountinformation.roblox.com/v1/users/{uid}/roblox-badges")
+            if status3 == 200 and isinstance(badges, list):
+                embed.add_field(name=f"Badges ({len(badges)})", value=", ".join(b.get("name", "?") for b in badges[:5]) or "None")
+        except Exception:
+            pass
+
+        embed.add_field(name="ID", value=str(uid))
+
+        try:
+            status4, followers = await self._json(f"https://friends.roblox.com/v1/users/{uid}/followers/count")
+            status5, following = await self._json(f"https://friends.roblox.com/v1/users/{uid}/followings/count")
+            if status4 == 200:
+                embed.add_field(name="Followers", value=str(followers.get("count", "Unknown")))
+            if status5 == 200:
+                embed.add_field(name="Following", value=str(following.get("count", "Unknown")))
+        except Exception:
+            pass
+
+        try:
+            status6, thumb = await self._json(
+                f"https://thumbnails.roblox.com/v1/users/avatar?userIds={uid}&size=420x420&format=png"
+            )
+            if status6 == 200 and thumb.get("data"):
+                embed.set_thumbnail(url=thumb["data"][0]["imageUrl"])
+        except Exception:
+            pass
+
         embed.add_field(name="Profile", value=f"https://www.roblox.com/users/{uid}/profile", inline=False)
         await ctx.send(embed=embed)
 
-    @osint.command(name="domain", description="Look up public DNS records for a domain.")
+    @username.command(name="hunter", description="Check a username across several platforms at once.")
+    @commands.cooldown(1, 20, commands.BucketType.user)
+    @app_commands.describe(name="Username to search for")
+    async def username_hunter(self, ctx: commands.Context, *, name: str):
+        name = name.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,30}", name):
+            return await ctx.send("Invalid username — letters, numbers, `.`, `_`, and `-` only.")
+
+        if ctx.interaction:
+            await ctx.interaction.response.defer()
+
+        results = []
+
+        async def check(platform, template, reliable):
+            url = template.format(u=name)
+            try:
+                async with self.session.get(url, allow_redirects=True) as resp:
+                    if resp.status < 400:
+                        results.append((platform, "✅ Found" if reliable else "❔ Possibly found (unreliable check)", url))
+                    elif resp.status == 404:
+                        results.append((platform, "❌ Not found", None))
+                    else:
+                        results.append((platform, f"❔ Unknown (status {resp.status})", None))
+            except Exception:
+                results.append((platform, "❔ Couldn't check (blocked/timed out)", None))
+
+        await asyncio.gather(*(check(p, t, r) for p, (t, r) in HUNTER_PLATFORMS.items()))
+
+        # Roblox via the real API — reliable, so handled separately.
+        try:
+            status, data = await self._json(
+                "https://users.roblox.com/v1/usernames/users",
+                method="POST",
+                payload={"usernames": [name], "excludeBannedUsers": False},
+            )
+            if status == 200 and data.get("data"):
+                uid = data["data"][0]["id"]
+                results.append(("Roblox", "✅ Found", f"https://www.roblox.com/users/{uid}/profile"))
+            else:
+                results.append(("Roblox", "❌ Not found", None))
+        except Exception:
+            results.append(("Roblox", "❔ Couldn't check", None))
+
+        results.append(("Discord", "⚠️ No public lookup available", None))
+
+        embed = discord.Embed(title=f"Username Hunter: {name}", color=discord.Color.blurple())
+        embed.description = (
+            "\n".join(f"**{p}** — {status}" + (f"\n{url}" if url else "") for p, status, url in results)
+        )
+        embed.set_footer(text="Results for X, LinkedIn, and Facebook are unreliable — those sites often return the same status whether or not the account exists.")
+        await ctx.send(embed=embed)
+
+    # ==================== domain / ip ====================
+
+    @commands.hybrid_group(name="domain", invoke_without_command=True)
+    async def domain(self, ctx: commands.Context):
+        await ctx.send("Usage: `,domain lookup <domain>`")
+
+    @domain.command(name="lookup", description="Look up public DNS records for a domain.")
     @commands.cooldown(3, 10, commands.BucketType.user)
     @app_commands.describe(domain="Domain name to resolve")
-    async def osint_domain(self, ctx: commands.Context, domain: str):
+    async def domain_lookup(self, ctx: commands.Context, domain: str):
         domain = domain.strip().lower()
         if domain.startswith(("http://", "https://")):
             domain = urlparse(domain).hostname or ""
@@ -104,12 +214,16 @@ class OSINT(commands.Cog):
         embed.add_field(name="Resolved IPs", value="\n".join(ips[:10]) or "None")
         await ctx.send(embed=embed)
 
-    @osint.command(name="ip", description="Look up public geolocation info for an IP address.")
+    @commands.hybrid_group(name="ip", invoke_without_command=True)
+    async def ip(self, ctx: commands.Context):
+        await ctx.send("Usage: `,ip lookup <ip address>`")
+
+    @ip.command(name="lookup", description="Look up public geolocation info for an IP address.")
     @commands.cooldown(3, 10, commands.BucketType.user)
-    @app_commands.describe(ip="Public IP address to look up")
-    async def osint_ip(self, ctx: commands.Context, ip: str):
+    @app_commands.describe(address="Public IP address to look up")
+    async def ip_lookup(self, ctx: commands.Context, address: str):
         try:
-            addr = ipaddress.ip_address(ip.strip())
+            addr = ipaddress.ip_address(address.strip())
         except ValueError:
             return await ctx.send("Invalid IP address.")
 
@@ -128,26 +242,86 @@ class OSINT(commands.Cog):
         embed.add_field(name="ISP", value=str((data.get("connection") or {}).get("isp", "Unknown")), inline=False)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="roblox", description="Find the Roblox account linked to a Discord ID (requires a verification flow to populate).")
-    @commands.cooldown(5, 10, commands.BucketType.user)
-    @app_commands.describe(discord_id="Discord user ID to look up")
-    async def roblox(self, ctx: commands.Context, discord_id: str):
-        if not discord_id.isdigit():
-            return await ctx.send("That doesn't look like a valid Discord ID.")
-        user = self.roblox_links.get(int(discord_id))
-        if not user:
-            return await ctx.send(
-                "No Roblox account is linked to that Discord ID. "
-                "The user must link/verify their Roblox account first."
-            )
+    # ==================== instagram ====================
 
-        uid = user["id"]
-        embed = discord.Embed(title="Discord → Roblox", color=discord.Color.blurple())
-        embed.add_field(name="Discord ID", value=discord_id)
-        embed.add_field(name="Roblox username", value=user.get("name", "Unknown"))
-        embed.add_field(name="Display name", value=user.get("displayName", "Unknown"))
-        embed.add_field(name="Roblox ID", value=str(uid))
-        embed.add_field(name="Profile", value=f"https://www.roblox.com/users/{uid}/profile", inline=False)
+    @commands.hybrid_command(name="instagram", description="Look up public Instagram profile stats.")
+    @commands.cooldown(3, 15, commands.BucketType.user)
+    @app_commands.describe(username="Instagram username")
+    async def instagram(self, ctx: commands.Context, username: str):
+        username = username.strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
+            return await ctx.send("Invalid Instagram username.")
+
+        try:
+            async with self.session.get(f"https://www.instagram.com/{username}/") as resp:
+                if resp.status == 404:
+                    return await ctx.send("No Instagram account found with that username.")
+                if resp.status != 200:
+                    return await ctx.send(f"Instagram returned an unexpected response (status {resp.status}) — it may be blocking the request.")
+                html = await resp.text()
+        except Exception:
+            return await ctx.send("Couldn't reach Instagram right now.")
+
+        desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+        img_match = re.search(r'<meta property="og:image" content="([^"]+)"', html)
+        if not desc_match:
+            return await ctx.send("Couldn't read that profile — it may be private, or Instagram changed its page layout.")
+
+        stats_match = re.search(r"([\d,\.]+[KM]?) Followers, ([\d,\.]+[KM]?) Following, ([\d,\.]+[KM]?) Posts", desc_match.group(1))
+        embed = discord.Embed(title=f"@{username}", color=discord.Color.from_rgb(225, 48, 108))
+        if stats_match:
+            embed.add_field(name="Followers", value=stats_match.group(1))
+            embed.add_field(name="Following", value=stats_match.group(2))
+            embed.add_field(name="Posts", value=stats_match.group(3))
+        else:
+            embed.description = desc_match.group(1)[:200]
+        if img_match:
+            embed.set_thumbnail(url=img_match.group(1).replace("&amp;", "&"))
+        embed.add_field(name="Profile", value=f"https://www.instagram.com/{username}/", inline=False)
+        await ctx.send(embed=embed)
+
+    # ==================== tiktok ====================
+
+    @commands.hybrid_command(name="tiktok", description="Look up public TikTok profile stats.")
+    @commands.cooldown(3, 15, commands.BucketType.user)
+    @app_commands.describe(username="TikTok username")
+    async def tiktok(self, ctx: commands.Context, username: str):
+        username = username.strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
+            return await ctx.send("Invalid TikTok username.")
+
+        try:
+            async with self.session.get(f"https://www.tiktok.com/@{username}") as resp:
+                if resp.status == 404:
+                    return await ctx.send("No TikTok account found with that username.")
+                if resp.status != 200:
+                    return await ctx.send(f"TikTok returned an unexpected response (status {resp.status}) — it may be blocking the request.")
+                html = await resp.text()
+        except Exception:
+            return await ctx.send("Couldn't reach TikTok right now.")
+
+        match = re.search(
+            r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>', html, re.DOTALL
+        )
+        if not match:
+            return await ctx.send("Couldn't read that profile — it may be private, or TikTok changed its page layout.")
+
+        try:
+            data = json.loads(match.group(1))
+            user_detail = data["__DEFAULT_SCOPE__"]["webapp.user-detail"]
+            user_info = user_detail["userInfo"]
+            stats = user_info["stats"]
+            user = user_info["user"]
+        except (KeyError, json.JSONDecodeError):
+            return await ctx.send("Couldn't parse that profile's data — TikTok may have changed its page layout.")
+
+        embed = discord.Embed(title=f"{user.get('nickname', username)} (@{username})", color=discord.Color.dark_teal())
+        embed.add_field(name="Likes", value=str(stats.get("heartCount", "Unknown")))
+        embed.add_field(name="Followers", value=str(stats.get("followerCount", "Unknown")))
+        embed.add_field(name="Following", value=str(stats.get("followingCount", "Unknown")))
+        if user.get("avatarLarger"):
+            embed.set_thumbnail(url=user["avatarLarger"])
+        embed.add_field(name="Profile", value=f"https://www.tiktok.com/@{username}", inline=False)
         await ctx.send(embed=embed)
 
 
