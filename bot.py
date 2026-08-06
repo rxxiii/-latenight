@@ -73,6 +73,7 @@ class BleedClone(commands.Bot):
             "cogs.lockdown",
             "cogs.games",
             "cogs.music",
+            "cogs.osint",
             "cogs.core",
         ):
             try:
