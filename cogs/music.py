@@ -30,6 +30,15 @@ FFMPEG_OPTIONS = {
     "options": "-vn -ar 48000 -ac 2 -b:a 192k",
 }
 
+# name -> (ffmpeg audio filter, short description)
+EQ_PRESETS = {
+    "Flat": ("", "No equalizer effects — the original mix."),
+    "Bass Boost": ("bass=g=12", "Boosted low end for a heavier bass sound."),
+    "Bass Reducer": ("bass=g=-8", "Reduced low end for a lighter, thinner sound."),
+    "Treble Boost": ("treble=g=10", "Boosted high end for crisper highs."),
+    "Vocal Boost": ("equalizer=f=3000:width_type=h:width=1000:g=6", "Emphasizes the vocal range."),
+}
+
 
 class Track:
     def __init__(self, title: str, url: str, stream_url: str, requester: discord.Member):
@@ -47,6 +56,54 @@ class GuildMusicState:
         self.voice_client: discord.VoiceClient | None = None
         self.volume = 1.0  # 1.0 = 100%
         self.audio_source: discord.PCMVolumeTransformer | None = None
+        self.eq_filter = ""  # current ffmpeg audio filter, "" = flat
+        self.eq_name = "Flat"
+        self.suppress_next_advance = False  # True while restarting the current track for an EQ change
+        self.position = 0.0  # seconds into the current track, as of segment_start_time
+        self.segment_start_time = 0.0  # time.time() when the current ffmpeg segment started
+
+
+class EqualizerSelect(discord.ui.Select):
+    def __init__(self, cog: "Music", guild_id: int):
+        options = [
+            discord.SelectOption(label=name, description=desc[:100])
+            for name, (_, desc) in EQ_PRESETS.items()
+        ]
+        super().__init__(placeholder="Choose an EQ preset...", options=options)
+        self.cog = cog
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        preset_name = self.values[0]
+        filt, desc = EQ_PRESETS[preset_name]
+        state = self.cog.get_state(self.guild_id)
+        state.eq_filter = filt
+        state.eq_name = preset_name
+
+        embed = discord.Embed(
+            title="🎚️ Equalizer",
+            description=f"Preset set to **{preset_name}** — {desc}\nRestarting the current track with the new EQ...",
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, view=self.view)
+        await self.cog._restart_current_track(interaction.guild)
+
+
+class EqualizerView(discord.ui.View):
+    def __init__(self, cog: "Music", guild_id: int, author_id: int):
+        super().__init__(timeout=120)
+        self.author_id = author_id
+        self.add_item(EqualizerSelect(cog, guild_id))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Only the person who ran this command can use this menu.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
 
 class Music(commands.Cog):
@@ -202,15 +259,35 @@ class Music(commands.Cog):
             return
 
         state.current = next_track
+        await self._start_playing(guild, next_track, seek=0.0)
+
+    async def _start_playing(self, guild: discord.Guild, track: "Track", seek: float = 0.0):
+        state = self.get_state(guild.id)
         if state.voice_client is None or not state.voice_client.is_connected():
             return
 
+        before_options = FFMPEG_OPTIONS["before_options"]
+        if seek > 0:
+            before_options = f"-ss {seek:.2f} " + before_options
+
+        options = "-vn -ar 48000 -ac 2 -b:a 192k"
+        if state.eq_filter:
+            options += f' -af "{state.eq_filter}"'
+
         source = discord.PCMVolumeTransformer(
-            discord.FFmpegPCMAudio(next_track.stream_url, **FFMPEG_OPTIONS), volume=state.volume
+            discord.FFmpegPCMAudio(track.stream_url, before_options=before_options, options=options),
+            volume=state.volume,
         )
         state.audio_source = source
+        state.position = seek
+        state.segment_start_time = time.time()
 
         def after_playing(error):
+            if state.suppress_next_advance:
+                # This "end" was us restarting the track for an EQ change,
+                # not a real end — don't advance the queue.
+                state.suppress_next_advance = False
+                return
             fut = asyncio.run_coroutine_threadsafe(self._play_next(guild), self.bot.loop)
             try:
                 fut.result()
@@ -218,6 +295,17 @@ class Music(commands.Cog):
                 pass
 
         state.voice_client.play(source, after=after_playing)
+
+    async def _restart_current_track(self, guild: discord.Guild):
+        state = self.get_state(guild.id)
+        if state.current is None or state.voice_client is None:
+            return
+        elapsed = time.time() - state.segment_start_time
+        resume_at = max(0.0, state.position + elapsed)
+        state.suppress_next_advance = True
+        if state.voice_client.is_playing() or state.voice_client.is_paused():
+            state.voice_client.stop()
+        await self._start_playing(guild, state.current, seek=resume_at)
 
     @commands.hybrid_command(name="play", aliases=["p"], description="Queue a track.")
     @app_commands.describe(query="Song name, YouTube link, or Spotify link")
@@ -307,6 +395,24 @@ class Music(commands.Cog):
         if state.audio_source:
             state.audio_source.volume = state.volume
         await ctx.send(f"🔊 Volume set to **{percent}%**.")
+
+    @commands.hybrid_command(name="equalizer", aliases=["eq"], description="Adjust the audio equalizer for the current track.")
+    async def equalizer(self, ctx: commands.Context):
+        state = self.get_state(ctx.guild.id)
+        if state.voice_client is None or not state.voice_client.is_connected() or state.current is None:
+            return await ctx.send("Nothing is playing right now.")
+
+        embed = discord.Embed(
+            title="🎚️ Equalizer",
+            description=(
+                f"Current preset: **{state.eq_name}**\n\n"
+                "Pick a preset below — playback will resume from this same spot with the new EQ "
+                "(a brief sub-second blip while it reconnects, not a restart). Only you can use this menu."
+            ),
+            color=discord.Color.blurple(),
+        )
+        view = EqualizerView(self, ctx.guild.id, ctx.author.id)
+        await ctx.send(embed=embed, view=view)
 
     @commands.hybrid_command(name="queue", description="Show the current queue.")
     async def queue_cmd(self, ctx: commands.Context):
