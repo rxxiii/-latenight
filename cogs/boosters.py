@@ -176,7 +176,23 @@ class Vanity(commands.Cog):
     @commands.hybrid_group(name="vanity", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     async def vanity(self, ctx: commands.Context):
-        await ctx.send_help(ctx.command)
+        row = await db.get_guild_config(ctx.guild.id)
+        role_ids = await db.vanity_role_list(ctx.guild.id)
+        embed = discord.Embed(title="Vanity Status", color=discord.Color.blurple())
+        embed.add_field(name="Phrase", value=f"`{row['vanity_phrase']}`" if row["vanity_phrase"] else "❌ Not set — use `,vanity set <phrase>`", inline=False)
+        embed.add_field(
+            name="Roles",
+            value=", ".join(f"<@&{r}>" for r in role_ids) if role_ids else "❌ None — use `,vanity role add <role>`",
+            inline=False,
+        )
+        embed.add_field(
+            name="Award channel",
+            value=f"<#{row['vanity_award_channel_id']}>" if row["vanity_award_channel_id"] else "Not set (optional)",
+            inline=False,
+        )
+        if not row["vanity_phrase"] or not role_ids:
+            embed.set_footer(text="Both a phrase AND at least one role are required for detection to do anything.")
+        await ctx.send(embed=embed)
 
     @vanity.command(name="set")
     @app_commands.describe(phrase="Text members need in their custom status, e.g. .gg/yourserver")
@@ -238,9 +254,11 @@ class Vanity(commands.Cog):
 
         status_text = ""
         for activity in after.activities:
-            if isinstance(activity, discord.CustomActivity) and activity.name:
-                status_text = activity.name.lower()
-                break
+            if isinstance(activity, discord.CustomActivity):
+                text = activity.name or getattr(activity, "state", None) or ""
+                if text:
+                    status_text = text.lower()
+                    break
 
         has_phrase = phrase.lower() in status_text
         already_has = await db.vanity_member_has(after.guild.id, after.id)
