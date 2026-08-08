@@ -1,11 +1,12 @@
 import datetime
 import re
 import time
+import unicodedata
 from collections import defaultdict, deque
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from database import db
 
@@ -21,15 +22,30 @@ LEET_MAP = str.maketrans({
     "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b",
     "@": "a", "$": "s", "!": "i",
 })
+
+# Common cross-alphabet lookalikes ("homoglyphs") that render nearly
+# identical to Latin letters but are different characters, so plain
+# lowercasing doesn't catch them — mainly Cyrillic and a few Greek letters.
+HOMOGLYPH_MAP = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ѕ": "s", "ԁ": "d", "ո": "n", "ϲ": "c", "ⅰ": "i", "ⅼ": "l",
+    "α": "a", "ο": "o", "ρ": "p", "ѵ": "v", "ᴀ": "a", "ʙ": "b",
+})
+
 NON_LETTER = re.compile(r"[^a-z]")
 REPEATED_LETTER = re.compile(r"(.)\1{2,}")
 WHITESPACE = re.compile(r"\s+")
 
 
 def normalize_for_filter(text: str) -> str:
-    """Collapses common bypass tricks so 'n i g g e r', 'n1gger', and
-    'niggerrrr' all normalize to the same thing as the plain word."""
-    text = text.lower().translate(LEET_MAP)
+    """Collapses common bypass tricks so 'n i g g e r', 'n1gger',
+    'niggerrrr', and stylized 'fancy font' Unicode text (𝐧𝐢𝐠𝐠𝐞𝐫, ｎｉｇｇｅｒ,
+    Ⓝⓘⓖⓖⓔⓡ) all normalize to the same thing as the plain word."""
+    # NFKD unpacks most "fancy text generator" Unicode styling (bold,
+    # italic, full-width, circled, etc.) back to plain Latin letters.
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))  # strip accent/diacritic marks
+    text = text.lower().translate(HOMOGLYPH_MAP).translate(LEET_MAP)
     text = NON_LETTER.sub("", text)  # drop spaces, punctuation, symbols used as separators
     text = REPEATED_LETTER.sub(r"\1\1", text)  # "niggerrrr" -> "nigger", "book" stays "book"
     return text
@@ -64,6 +80,10 @@ class Filter(commands.Cog):
         self.message_times: dict[tuple[int, int], deque] = defaultdict(deque)
         # (guild_id, user_id) -> deque of (timestamp, normalized_content), for duplicate detection
         self.recent_contents: dict[tuple[int, int], deque] = defaultdict(deque)
+        self.auto_scan.start()
+
+    def cog_unload(self):
+        self.auto_scan.cancel()
 
     @commands.hybrid_group(name="filter", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
@@ -129,6 +149,28 @@ class Filter(commands.Cog):
             except discord.HTTPException:
                 continue
         await status.edit(content=f"✅ Scan complete — {caught} message(s) removed and their authors timed out.")
+
+    @tasks.loop(minutes=15)
+    async def auto_scan(self):
+        for guild in self.bot.guilds:
+            words = await db.get_filter_words(guild.id)
+            config = await db.get_filter_config(guild.id)
+            if not words and not config["invites"]:
+                continue  # nothing this guild wants auto-checked
+
+            for channel in guild.text_channels:
+                try:
+                    async for message in channel.history(limit=50):
+                        try:
+                            await self._check_message(message)
+                        except discord.HTTPException:
+                            continue
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+
+    @auto_scan.before_loop
+    async def before_auto_scan(self):
+        await self.bot.wait_until_ready()
 
     async def _punish(self, message: discord.Message, reason: str, timeout_minutes: int, purge_check=None):
         try:

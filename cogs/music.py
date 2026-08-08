@@ -366,6 +366,26 @@ class Music(commands.Cog):
         else:
             await ctx.send("Nothing is playing.")
 
+    @commands.hybrid_command(name="pause", description="Pause the current track.")
+    async def pause(self, ctx: commands.Context):
+        state = self.get_state(ctx.guild.id)
+        if state.voice_client is None or not state.voice_client.is_playing():
+            return await ctx.send("Nothing is playing right now.")
+        # Bank the elapsed time so far, so a later ,eq change (or anything
+        # else relying on playback position) resumes from the right spot.
+        state.position += time.time() - state.segment_start_time
+        state.voice_client.pause()
+        await ctx.send("⏸️ Paused.")
+
+    @commands.hybrid_command(name="resume", description="Resume the paused track.")
+    async def resume(self, ctx: commands.Context):
+        state = self.get_state(ctx.guild.id)
+        if state.voice_client is None or not state.voice_client.is_paused():
+            return await ctx.send("Nothing is paused right now.")
+        state.segment_start_time = time.time()  # restart the clock from the resume point
+        state.voice_client.resume()
+        await ctx.send("▶️ Resumed.")
+
     @commands.hybrid_command(name="disconnect", aliases=["stop", "dc"], description="Disconnect and stop playing music.")
     async def disconnect(self, ctx: commands.Context):
         state = self.get_state(ctx.guild.id)
