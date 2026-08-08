@@ -33,22 +33,77 @@ HOMOGLYPH_MAP = str.maketrans({
 })
 
 NON_LETTER = re.compile(r"[^a-z]")
+NON_LETTER_KEEP_SPACE_STAR = re.compile(r"[^a-z\s*]")
+NON_LETTER_KEEP_SPACE = re.compile(r"[^a-z\s]")
 REPEATED_LETTER = re.compile(r"(.)\1{2,}")
 WHITESPACE = re.compile(r"\s+")
 
 
-def normalize_for_filter(text: str) -> str:
-    """Collapses common bypass tricks so 'n i g g e r', 'n1gger',
-    'niggerrrr', and stylized 'fancy font' Unicode text (𝐧𝐢𝐠𝐠𝐞𝐫, ｎｉｇｇｅｒ,
-    Ⓝⓘⓖⓖⓔⓡ) all normalize to the same thing as the plain word."""
-    # NFKD unpacks most "fancy text generator" Unicode styling (bold,
-    # italic, full-width, circled, etc.) back to plain Latin letters.
+def _clean(text: str, keep_stars: bool = False) -> str:
+    """Shared normalization: unpacks 'fancy font' Unicode styling, strips
+    accents, maps homoglyphs and leetspeak back to plain letters, and
+    collapses stretched-out repeated letters. Keeps spaces (and optionally
+    asterisks) so word boundaries aren't lost."""
     text = unicodedata.normalize("NFKD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))  # strip accent/diacritic marks
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = text.lower().translate(HOMOGLYPH_MAP).translate(LEET_MAP)
-    text = NON_LETTER.sub("", text)  # drop spaces, punctuation, symbols used as separators
-    text = REPEATED_LETTER.sub(r"\1\1", text)  # "niggerrrr" -> "nigger", "book" stays "book"
-    return text
+    text = (NON_LETTER_KEEP_SPACE_STAR if keep_stars else NON_LETTER_KEEP_SPACE).sub("", text)
+    text = REPEATED_LETTER.sub(r"\1", text)
+    return WHITESPACE.sub(" ", text).strip()
+
+
+def _wildcard_match(token: str, word: str) -> bool:
+    """True if `token` (which may contain * as a single-character
+    placeholder, e.g. from 'n*gger') matches `word` exactly."""
+    if len(token) != len(word) or "*" not in token:
+        return False
+    return all(tc == "*" or tc == wc for tc, wc in zip(token, word))
+
+
+def find_filter_match(content: str, filter_words: list[str]) -> str | None:
+    """Returns the matched filter word if `content` contains it — or a
+    spacing, leetspeak, font, homoglyph, repeated-letter, or asterisk-
+    placeholder bypass of it — else None. Uses word-boundary-aware matching
+    so a short filtered word can't false-positive inside an unrelated
+    longer word (e.g. filtering 'ass' won't flag 'class' or 'assignment')."""
+    text = _clean(content, keep_stars=True)
+    tokens = text.split(" ") if text else []
+
+    # Runs of consecutive single-character tokens — catches "n i g g e r"
+    # style letter-by-letter spacing without merging real multi-letter words.
+    joined_runs = []
+    current = ""
+    for t in tokens:
+        if len(t) == 1:
+            current += t
+        else:
+            if current:
+                joined_runs.append(current)
+            current = ""
+    if current:
+        joined_runs.append(current)
+
+    for raw_word in filter_words:
+        word = _clean(raw_word)
+        if not word:
+            continue
+        compact_word = word.replace(" ", "")
+
+        # 1. Direct match with word boundaries — single words and phrases alike.
+        text_no_star = text.replace("*", "")
+        if re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text_no_star):
+            return raw_word
+
+        # 2. Letter-by-letter spacing bypass ("n i g g e r").
+        if any(compact_word in run for run in joined_runs):
+            return raw_word
+
+        # 3. Asterisk/placeholder wildcard bypass ("n*gger", "f*g").
+        for token in tokens:
+            if _wildcard_match(token, compact_word):
+                return raw_word
+
+    return None
 
 
 def normalize_for_duplicate_check(text: str) -> str:
@@ -212,15 +267,12 @@ class Filter(commands.Cog):
             return False
 
         config = await db.get_filter_config(message.guild.id)
-        content = message.content.lower()
 
         words = await db.get_filter_words(message.guild.id)
-        normalized_content = normalize_for_filter(message.content)
-        for word in words:
-            normalized_word = normalize_for_filter(word)
-            if word in content or (normalized_word and normalized_word in normalized_content):
-                await self._punish(message, "a blocked word", WORD_TIMEOUT_MINUTES)
-                return True
+        matched = find_filter_match(message.content, words) if words else None
+        if matched:
+            await self._punish(message, "a blocked word", WORD_TIMEOUT_MINUTES)
+            return True
 
         if config["invites"]:
             stripped = WHITESPACE.sub("", message.content)
