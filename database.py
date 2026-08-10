@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS guild_config (
     vanity_award_channel_id INTEGER,
     content_filter_enabled INTEGER DEFAULT 0,
     content_filter_log_channel_id INTEGER,
-    content_filter_action TEXT DEFAULT 'delete'
+    content_filter_action TEXT DEFAULT 'delete',
+    image_mute_role_id INTEGER,
+    reaction_mute_role_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS warnings (
@@ -216,6 +218,7 @@ CREATE TABLE IF NOT EXISTS jailed_members (
     guild_id INTEGER,
     user_id INTEGER,
     previous_roles TEXT,
+    jail_until INTEGER,
     PRIMARY KEY (guild_id, user_id)
 );
 
@@ -310,6 +313,35 @@ CREATE TABLE IF NOT EXISTS permitted_users (
     user_id INTEGER PRIMARY KEY,
     added_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS global_filter_words (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    word TEXT UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS mod_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    moderator_id INTEGER,
+    action TEXT,
+    created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS nuke_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    channel_id INTEGER UNIQUE,
+    interval_minutes INTEGER,
+    message TEXT,
+    next_run INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS forced_nicknames (
+    guild_id INTEGER,
+    user_id INTEGER,
+    nickname TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 
@@ -355,6 +387,9 @@ class Database:
             ("guild_config", "content_filter_enabled", "INTEGER DEFAULT 0"),
             ("guild_config", "content_filter_log_channel_id", "INTEGER"),
             ("guild_config", "content_filter_action", "TEXT DEFAULT 'delete'"),
+            ("guild_config", "image_mute_role_id", "INTEGER"),
+            ("guild_config", "reaction_mute_role_id", "INTEGER"),
+            ("jailed_members", "jail_until", "INTEGER"),
         ]
         for table, column, coltype in migrations:
             try:
@@ -916,10 +951,10 @@ class Database:
 
     # ---------- jail ----------
 
-    async def set_jailed(self, guild_id, user_id, previous_roles_csv):
+    async def set_jailed(self, guild_id, user_id, previous_roles_csv, jail_until=None):
         await self.conn.execute(
-            "INSERT OR REPLACE INTO jailed_members (guild_id, user_id, previous_roles) VALUES (?, ?, ?)",
-            (guild_id, user_id, previous_roles_csv),
+            "INSERT OR REPLACE INTO jailed_members (guild_id, user_id, previous_roles, jail_until) VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, previous_roles_csv, jail_until),
         )
         await self.conn.commit()
 
@@ -1260,6 +1295,99 @@ class Database:
 
     async def permit_list(self):
         cur = await self.conn.execute("SELECT * FROM permitted_users")
+        return await cur.fetchall()
+
+    # ---------- global filter words ----------
+
+    async def add_global_filter_word(self, word):
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO global_filter_words (word) VALUES (?)", (word.lower(),)
+        )
+        await self.conn.commit()
+
+    async def remove_global_filter_word(self, word):
+        await self.conn.execute(
+            "DELETE FROM global_filter_words WHERE word = ?", (word.lower(),)
+        )
+        await self.conn.commit()
+
+    async def get_global_filter_words(self):
+        cur = await self.conn.execute("SELECT word FROM global_filter_words")
+        rows = await cur.fetchall()
+        return [r["word"] for r in rows]
+
+    # ---------- mod action stats ----------
+
+    async def log_mod_action(self, guild_id, moderator_id, action, created_at):
+        await self.conn.execute(
+            "INSERT INTO mod_actions (guild_id, moderator_id, action, created_at) VALUES (?, ?, ?, ?)",
+            (guild_id, moderator_id, action, created_at),
+        )
+        await self.conn.commit()
+
+    async def get_mod_action_counts(self, guild_id, moderator_id):
+        cur = await self.conn.execute(
+            "SELECT action, COUNT(*) as count FROM mod_actions WHERE guild_id = ? AND moderator_id = ? GROUP BY action",
+            (guild_id, moderator_id),
+        )
+        rows = await cur.fetchall()
+        return {r["action"]: r["count"] for r in rows}
+
+    # ---------- scheduled nukes ----------
+
+    async def add_nuke_schedule(self, guild_id, channel_id, interval_minutes, message, next_run):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO nuke_schedule (guild_id, channel_id, interval_minutes, message, next_run) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (guild_id, channel_id, interval_minutes, message, next_run),
+        )
+        await self.conn.commit()
+
+    async def remove_nuke_schedule(self, channel_id):
+        await self.conn.execute("DELETE FROM nuke_schedule WHERE channel_id = ?", (channel_id,))
+        await self.conn.commit()
+
+    async def get_nuke_schedule(self, channel_id):
+        cur = await self.conn.execute("SELECT * FROM nuke_schedule WHERE channel_id = ?", (channel_id,))
+        return await cur.fetchone()
+
+    async def get_due_nuke_schedules(self, now):
+        cur = await self.conn.execute("SELECT * FROM nuke_schedule WHERE next_run <= ?", (now,))
+        return await cur.fetchall()
+
+    async def update_nuke_schedule_next_run(self, channel_id, next_run):
+        await self.conn.execute(
+            "UPDATE nuke_schedule SET next_run = ? WHERE channel_id = ?", (next_run, channel_id)
+        )
+        await self.conn.commit()
+
+    # ---------- forced nicknames ----------
+
+    async def set_forced_nickname(self, guild_id, user_id, nickname):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO forced_nicknames (guild_id, user_id, nickname) VALUES (?, ?, ?)",
+            (guild_id, user_id, nickname),
+        )
+        await self.conn.commit()
+
+    async def remove_forced_nickname(self, guild_id, user_id):
+        await self.conn.execute(
+            "DELETE FROM forced_nicknames WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
+        )
+        await self.conn.commit()
+
+    async def get_forced_nickname(self, guild_id, user_id):
+        cur = await self.conn.execute(
+            "SELECT * FROM forced_nicknames WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
+        )
+        return await cur.fetchone()
+
+    # ---------- jail (timed) ----------
+
+    async def get_expired_jails(self, now):
+        cur = await self.conn.execute(
+            "SELECT * FROM jailed_members WHERE jail_until IS NOT NULL AND jail_until <= ?", (now,)
+        )
         return await cur.fetchall()
 
 
