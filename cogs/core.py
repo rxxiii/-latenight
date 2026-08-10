@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import aiohttp
+
 from database import db
 
 
@@ -143,6 +145,38 @@ class Core(commands.Cog):
         embed.add_field(name="Channels", value=len(guild.channels), inline=True)
         embed.add_field(name="Boosts", value=guild.premium_subscription_count, inline=True)
         await ctx.send(embed=embed)
+
+    # ---------- global bot appearance (owner-only — affects every server) ----------
+
+    @commands.hybrid_command(name="setavatar", description="Change the bot's avatar EVERYWHERE (not just this server).")
+    @commands.is_owner()
+    @app_commands.describe(url="Direct image URL (png/jpg)")
+    async def setavatar(self, ctx: commands.Context, url: str):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return await ctx.send("Couldn't download that image.")
+                    data = await resp.read()
+            await self.bot.user.edit(avatar=data)
+            await ctx.send("✅ Avatar updated — this changes the bot everywhere it's added, not just this server.")
+        except discord.HTTPException as e:
+            await ctx.send(f"Couldn't update the avatar: {e}")
+
+    @commands.hybrid_command(name="setbanner", description="Change the bot's banner EVERYWHERE (not just this server).")
+    @commands.is_owner()
+    @app_commands.describe(url="Direct image URL (png/jpg)")
+    async def setbanner(self, ctx: commands.Context, url: str):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return await ctx.send("Couldn't download that image.")
+                    data = await resp.read()
+            await self.bot.user.edit(banner=data)
+            await ctx.send("✅ Banner updated — this changes the bot everywhere it's added, not just this server.")
+        except discord.HTTPException as e:
+            await ctx.send(f"Couldn't update the banner: {e}")
 
 
 async def setup(bot: commands.Bot):

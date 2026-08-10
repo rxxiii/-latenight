@@ -33,9 +33,11 @@ class ModerationExtended(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.check_temp_bans.start()
+        self.check_expired_jails.start()
 
     def cog_unload(self):
         self.check_temp_bans.cancel()
+        self.check_expired_jails.cancel()
 
     # ---------- setup ----------
 
@@ -202,8 +204,8 @@ class ModerationExtended(commands.Cog):
 
     @commands.hybrid_command(name="jail", description="Strip a member's roles and confine them to the jail channel.")
     @commands.check(staff_check)
-    @app_commands.describe(member="Member to jail", reason="Reason for jailing")
-    async def jail(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    @app_commands.describe(member="Member to jail", duration="Optional, e.g. 1h, 1d — leave blank for indefinite", reason="Reason for jailing")
+    async def jail(self, ctx: commands.Context, member: discord.Member, duration: str = None, *, reason: str = "No reason provided"):
         ok, error = hierarchy_ok(ctx, member)
         if not ok:
             return await ctx.send(error)
@@ -218,8 +220,16 @@ class ModerationExtended(commands.Cog):
         if existing:
             return await ctx.send(f"**{member}** is already jailed.")
 
+        jail_until = None
+        if duration:
+            try:
+                delta = parse_duration(duration)
+                jail_until = int(time.time() + delta.total_seconds())
+            except ValueError:
+                return await ctx.send("Duration must end in s/m/h/d/w, e.g. 10m, 2h, 1d — or leave it blank.")
+
         previous_roles = [r.id for r in member.roles if r.name != "@everyone" and not r.managed]
-        await db.set_jailed(ctx.guild.id, member.id, ",".join(str(r) for r in previous_roles))
+        await db.set_jailed(ctx.guild.id, member.id, ",".join(str(r) for r in previous_roles), jail_until)
 
         try:
             if previous_roles:
@@ -228,7 +238,11 @@ class ModerationExtended(commands.Cog):
         except discord.HTTPException:
             return await ctx.send("I couldn't change that member's roles — check my role position.")
 
-        await ctx.send(f"⛓️ Jailed **{member}** — {reason}")
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "jail", int(time.time()))
+        if duration:
+            await ctx.send(f"⛓️ Jailed **{member}** for `{duration}` — {reason}")
+        else:
+            await ctx.send(f"⛓️ Jailed **{member}** — {reason}")
 
     @commands.hybrid_command(name="unjail", description="Release a member from jail and restore their previous roles.")
     @commands.check(staff_check)
@@ -254,7 +268,134 @@ class ModerationExtended(commands.Cog):
         await db.remove_jailed(ctx.guild.id, member.id)
         await ctx.send(f"🔓 Unjailed **{member}**, roles restored.")
 
+    # ---------- image / reaction mute ----------
+
+    async def _get_or_create_mute_role(self, guild: discord.Guild, config_key: str, role_name: str, deny_kwargs: dict):
+        row = await db.get_guild_config(guild.id)
+        role = guild.get_role(row[config_key]) if row[config_key] else None
+        if role is None:
+            role = await guild.create_role(name=role_name, reason="Mute role setup")
+            for channel in guild.channels:
+                try:
+                    await channel.set_permissions(role, **deny_kwargs)
+                except discord.HTTPException:
+                    pass
+            await db.set_guild_config(guild.id, **{config_key: role.id})
+        return role
+
+    @commands.hybrid_command(name="imute", description="Remove a member's ability to post images/embeds, server-wide.")
+    @commands.has_permissions(manage_roles=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member to image-mute", reason="Reason")
+    async def imute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
+        role = await self._get_or_create_mute_role(
+            ctx.guild, "image_mute_role_id", "Image Muted",
+            {"attach_files": False, "embed_links": False},
+        )
+        await member.add_roles(role, reason=f"{ctx.author}: {reason}")
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "imute", int(time.time()))
+        await ctx.send(f"🖼️ {member.mention} can no longer post images or embeds — {reason}")
+
+    @commands.hybrid_command(name="iunmute", description="Restore a member's ability to post images/embeds.")
+    @commands.has_permissions(manage_roles=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member to un-image-mute")
+    async def iunmute(self, ctx: commands.Context, member: discord.Member):
+        row = await db.get_guild_config(ctx.guild.id)
+        role = ctx.guild.get_role(row["image_mute_role_id"]) if row["image_mute_role_id"] else None
+        if role and role in member.roles:
+            await member.remove_roles(role, reason=f"Un-image-muted by {ctx.author}")
+        await ctx.send(f"🖼️ {member.mention} can post images/embeds again.")
+
+    @commands.hybrid_command(name="rmute", description="Remove a member's ability to add reactions, server-wide.")
+    @commands.has_permissions(manage_roles=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member to reaction-mute", reason="Reason")
+    async def rmute(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
+        role = await self._get_or_create_mute_role(
+            ctx.guild, "reaction_mute_role_id", "Reaction Muted",
+            {"add_reactions": False},
+        )
+        await member.add_roles(role, reason=f"{ctx.author}: {reason}")
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "rmute", int(time.time()))
+        await ctx.send(f"🚫 {member.mention} can no longer add reactions — {reason}")
+
+    @commands.hybrid_command(name="runmute", description="Restore a member's ability to add reactions.")
+    @commands.has_permissions(manage_roles=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member to un-reaction-mute")
+    async def runmute(self, ctx: commands.Context, member: discord.Member):
+        row = await db.get_guild_config(ctx.guild.id)
+        role = ctx.guild.get_role(row["reaction_mute_role_id"]) if row["reaction_mute_role_id"] else None
+        if role and role in member.roles:
+            await member.remove_roles(role, reason=f"Un-reaction-muted by {ctx.author}")
+        await ctx.send(f"🚫 {member.mention} can add reactions again.")
+
+    # ---------- stripstaff ----------
+
+    @commands.hybrid_command(name="stripstaff", description="Strip all bound staff roles from a member.")
+    @commands.has_permissions(administrator=True)
+    @commands.bot_has_permissions(manage_roles=True)
+    @app_commands.describe(member="Member to strip staff roles from")
+    async def stripstaff(self, ctx: commands.Context, member: discord.Member):
+        staff_role_ids = await db.list_staff_roles(ctx.guild.id)
+        if not staff_role_ids:
+            return await ctx.send("No staff roles are bound — use `,bind staff <role>` first.")
+        roles_to_remove = [r for r in member.roles if r.id in staff_role_ids]
+        if not roles_to_remove:
+            return await ctx.send(f"**{member}** doesn't have any bound staff roles.")
+        await member.remove_roles(*roles_to_remove, reason=f"Staff stripped by {ctx.author}")
+        await ctx.send(f"Stripped {len(roles_to_remove)} staff role(s) from {member.mention}.")
+
+    # ---------- modstats ----------
+
+    @commands.hybrid_command(name="modstats", description="View punishment statistics for a moderator.")
+    @app_commands.describe(member="Moderator to check (defaults to you)")
+    async def modstats(self, ctx: commands.Context, member: discord.Member = None):
+        member = member or ctx.author
+        counts = await db.get_mod_action_counts(ctx.guild.id, member.id)
+        if not counts:
+            return await ctx.send(f"**{member}** has no logged moderation actions.")
+        embed = discord.Embed(title=f"Mod Stats — {member}", color=discord.Color.blurple())
+        for action, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+            embed.add_field(name=action.capitalize(), value=str(count))
+        embed.set_footer(text=f"Total: {sum(counts.values())}")
+        await ctx.send(embed=embed)
+
     # ---------- temp ban expiry loop ----------
+
+    @tasks.loop(minutes=1)
+    async def check_expired_jails(self):
+        expired = await db.get_expired_jails(int(time.time()))
+        for entry in expired:
+            guild = self.bot.get_guild(entry["guild_id"])
+            if guild is None:
+                await db.remove_jailed(entry["guild_id"], entry["user_id"])
+                continue
+            member = guild.get_member(entry["user_id"])
+            row = await db.get_guild_config(guild.id)
+            jail_role = guild.get_role(row["jail_role_id"]) if row["jail_role_id"] else None
+            if member:
+                previous_role_ids = [int(r) for r in entry["previous_roles"].split(",") if r]
+                roles_to_restore = [guild.get_role(r) for r in previous_role_ids if guild.get_role(r)]
+                try:
+                    if jail_role and jail_role in member.roles:
+                        await member.remove_roles(jail_role, reason="Jail duration expired")
+                    if roles_to_restore:
+                        await member.add_roles(*roles_to_restore, reason="Jail duration expired")
+                except discord.HTTPException:
+                    pass
+            await db.remove_jailed(guild.id, entry["user_id"])
+
+    @check_expired_jails.before_loop
+    async def before_check_expired_jails(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(minutes=1)
     async def check_temp_bans(self):

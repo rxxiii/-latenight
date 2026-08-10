@@ -74,7 +74,7 @@ class OSINT(commands.Cog):
 
     # ==================== username / roblox ====================
 
-    @commands.hybrid_group(name="username", invoke_without_command=True, description="Look up a Roblox profile by username.")
+    @commands.hybrid_group(name="username", aliases=["roblox"], invoke_without_command=True, description="Look up a Roblox profile by username.")
     @commands.cooldown(3, 10, commands.BucketType.user)
     @app_commands.describe(name="Roblox username to look up")
     async def username(self, ctx: commands.Context, *, name: str):
@@ -252,6 +252,39 @@ class OSINT(commands.Cog):
         if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
             return await ctx.send("Invalid Instagram username.")
 
+        # Primary: Instagram's own web_profile_info endpoint — returns clean
+        # JSON and is generally more reliable than parsing the HTML page.
+        try:
+            api_headers = dict(BROWSER_HEADERS)
+            api_headers["X-IG-App-ID"] = "936619743392459"
+            async with self.session.get(
+                f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}",
+                headers=api_headers,
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    user = (data.get("data") or {}).get("user")
+                    if user:
+                        embed = discord.Embed(
+                            title=f"{user.get('full_name') or username} (@{username})",
+                            color=discord.Color.from_rgb(225, 48, 108),
+                        )
+                        embed.add_field(name="Followers", value=str(user.get("edge_followed_by", {}).get("count", "Unknown")))
+                        embed.add_field(name="Following", value=str(user.get("edge_follow", {}).get("count", "Unknown")))
+                        embed.add_field(name="Posts", value=str(user.get("edge_owner_to_timeline_media", {}).get("count", "Unknown")))
+                        if user.get("is_private"):
+                            embed.add_field(name="Private account", value="🔒 Yes", inline=False)
+                        pic = user.get("profile_pic_url_hd") or user.get("profile_pic_url")
+                        if pic:
+                            embed.set_thumbnail(url=pic)
+                        embed.add_field(name="Profile", value=f"https://www.instagram.com/{username}/", inline=False)
+                        return await ctx.send(embed=embed)
+                elif resp.status == 404:
+                    return await ctx.send("No Instagram account found with that username.")
+        except Exception:
+            pass  # fall through to the HTML-scraping fallback below
+
+        # Fallback: parse the public profile page's meta tags.
         try:
             async with self.session.get(f"https://www.instagram.com/{username}/") as resp:
                 if resp.status == 404:

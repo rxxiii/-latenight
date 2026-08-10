@@ -1,8 +1,9 @@
 import datetime
+import time
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from database import db
 from cogs.fakeperms import fake_or_real_permission
@@ -36,6 +37,10 @@ class Moderation(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.check_nuke_schedule.start()
+
+    def cog_unload(self):
+        self.check_nuke_schedule.cancel()
 
     async def cog_check(self, ctx: commands.Context):
         return ctx.guild is not None
@@ -65,6 +70,7 @@ class Moderation(commands.Cog):
         delete_seconds = max(0, min(delete_seconds, 604800))
 
         await member.ban(reason=f"{ctx.author}: {reason}", delete_message_seconds=delete_seconds)
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "ban", int(time.time()))
         await ctx.send(f"🔨 Banned **{member}** — {reason}")
 
     @commands.hybrid_command(name="unban", description="Unban a user by ID.")
@@ -92,6 +98,7 @@ class Moderation(commands.Cog):
         if not ok:
             return await ctx.send(error)
         await member.kick(reason=f"{ctx.author}: {reason}")
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "kick", int(time.time()))
         await ctx.send(f"👢 Kicked **{member}** — {reason}")
 
     # ---------- timeout ----------
@@ -111,6 +118,7 @@ class Moderation(commands.Cog):
         if delta > datetime.timedelta(days=28):
             return await ctx.send("Timeouts can be at most 28 days.")
         await member.timeout(delta, reason=f"{ctx.author}: {reason}")
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "timeout", int(time.time()))
         await ctx.send(f"🔇 Timed out **{member}** for `{duration}` — {reason}")
 
     @commands.hybrid_command(name="untimeout", aliases=["unmute"], description="Remove a member's timeout.")
@@ -131,6 +139,7 @@ class Moderation(commands.Cog):
         if not ok:
             return await ctx.send(error)
         await db.add_warning(ctx.guild.id, member.id, ctx.author.id, reason)
+        await db.log_mod_action(ctx.guild.id, ctx.author.id, "warn", int(time.time()))
         await ctx.send(f"⚠️ Warned **{member}** — {reason}")
         try:
             await member.send(f"You were warned in **{ctx.guild.name}**: {reason}")
@@ -177,6 +186,33 @@ class Moderation(commands.Cog):
         else:
             await ctx.send(f"Nickname for {member.mention} reset.")
 
+    @commands.hybrid_command(name="forcenickname", aliases=["fn"], description="Lock a member's nickname — reverts it if they try to change it.")
+    @commands.has_permissions(manage_nicknames=True)
+    @commands.bot_has_permissions(manage_nicknames=True)
+    @app_commands.describe(member="Member to lock", new_nickname="Nickname to lock them to (leave blank to unlock)")
+    async def forcenickname(self, ctx: commands.Context, member: discord.Member, *, new_nickname: str = None):
+        ok, error = hierarchy_ok(ctx, member)
+        if not ok:
+            return await ctx.send(error)
+        if new_nickname:
+            await member.edit(nick=new_nickname, reason=f"Force-nicknamed by {ctx.author}")
+            await db.set_forced_nickname(ctx.guild.id, member.id, new_nickname)
+            await ctx.send(f"🔒 {member.mention}'s nickname is locked to **{new_nickname}**.")
+        else:
+            await db.remove_forced_nickname(ctx.guild.id, member.id)
+            await ctx.send(f"🔓 {member.mention}'s nickname is no longer locked.")
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.nick == after.nick:
+            return
+        forced = await db.get_forced_nickname(after.guild.id, after.id)
+        if forced and after.nick != forced["nickname"]:
+            try:
+                await after.edit(nick=forced["nickname"], reason="Nickname is locked")
+            except discord.HTTPException:
+                pass
+
     # ---------- purge ----------
 
     @commands.hybrid_command(name="purge", description="Bulk delete messages in this channel.")
@@ -196,24 +232,34 @@ class Moderation(commands.Cog):
 
     # ---------- lock / unlock / slowmode ----------
 
-    @commands.hybrid_command(name="lock", description="Lock the current channel, or every channel with 'all' (deny @everyone Send Messages).")
+    async def _lockable_roles(self, guild: discord.Guild):
+        staff_role_ids = set(await db.list_staff_roles(guild.id))
+        return [r for r in guild.roles if not r.managed and r.id not in staff_role_ids]
+
+    @commands.hybrid_command(name="lock", description="Lock the current channel (or 'all') — denies every role except bound staff roles.")
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     @app_commands.describe(target="A channel to lock, 'all' to lock every channel, or leave blank for this channel")
     async def lock(self, ctx: commands.Context, target: str = None):
+        roles = await self._lockable_roles(ctx.guild)
+
         if target and target.lower() == "all":
-            count = 0
+            channel_count = 0
             for channel in ctx.guild.text_channels:
-                overwrite = channel.overwrites_for(ctx.guild.default_role)
-                if overwrite.send_messages is False:
-                    continue
-                overwrite.send_messages = False
-                try:
-                    await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-                    count += 1
-                except discord.HTTPException:
-                    pass
-            return await ctx.send(f"🔒 Locked {count} channel(s).")
+                changed = False
+                for role in roles:
+                    overwrite = channel.overwrites_for(role)
+                    if overwrite.send_messages is False:
+                        continue
+                    overwrite.send_messages = False
+                    try:
+                        await channel.set_permissions(role, overwrite=overwrite)
+                        changed = True
+                    except discord.HTTPException:
+                        pass
+                if changed:
+                    channel_count += 1
+            return await ctx.send(f"🔒 Locked {channel_count} channel(s) for every non-staff role.")
 
         channel = ctx.channel
         if target:
@@ -222,29 +268,39 @@ class Moderation(commands.Cog):
             except commands.BadArgument:
                 return await ctx.send(f"Couldn't find a channel matching `{target}`.")
 
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = False
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-        await ctx.send(f"🔒 Locked {channel.mention}.")
+        for role in roles:
+            overwrite = channel.overwrites_for(role)
+            overwrite.send_messages = False
+            try:
+                await channel.set_permissions(role, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+        await ctx.send(f"🔒 Locked {channel.mention} for every non-staff role.")
 
     @commands.hybrid_command(name="unlock", description="Unlock the current channel, or every channel with 'all'.")
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     @app_commands.describe(target="A channel to unlock, 'all' to unlock every channel, or leave blank for this channel")
     async def unlock(self, ctx: commands.Context, target: str = None):
+        roles = await self._lockable_roles(ctx.guild)
+
         if target and target.lower() == "all":
-            count = 0
+            channel_count = 0
             for channel in ctx.guild.text_channels:
-                overwrite = channel.overwrites_for(ctx.guild.default_role)
-                if overwrite.send_messages is not False:
-                    continue
-                overwrite.send_messages = None
-                try:
-                    await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-                    count += 1
-                except discord.HTTPException:
-                    pass
-            return await ctx.send(f"🔓 Unlocked {count} channel(s).")
+                changed = False
+                for role in roles:
+                    overwrite = channel.overwrites_for(role)
+                    if overwrite.send_messages is not False:
+                        continue
+                    overwrite.send_messages = None
+                    try:
+                        await channel.set_permissions(role, overwrite=overwrite)
+                        changed = True
+                    except discord.HTTPException:
+                        pass
+                if changed:
+                    channel_count += 1
+            return await ctx.send(f"🔓 Unlocked {channel_count} channel(s).")
 
         channel = ctx.channel
         if target:
@@ -253,9 +309,13 @@ class Moderation(commands.Cog):
             except commands.BadArgument:
                 return await ctx.send(f"Couldn't find a channel matching `{target}`.")
 
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = None
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+        for role in roles:
+            overwrite = channel.overwrites_for(role)
+            overwrite.send_messages = None
+            try:
+                await channel.set_permissions(role, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
         await ctx.send(f"🔓 Unlocked {channel.mention}.")
 
     @commands.hybrid_command(name="slowmode", description="Set slowmode delay for this channel (seconds).")
@@ -271,7 +331,7 @@ class Moderation(commands.Cog):
 
     # ---------- nuke ----------
 
-    @commands.hybrid_command(name="nuke", description="Clone this channel (same permissions) and delete the original.")
+    @commands.hybrid_group(name="nuke", invoke_without_command=True, description="Clone this channel (same permissions) and delete the original.")
     @commands.has_permissions(administrator=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def nuke(self, ctx: commands.Context, channel: discord.TextChannel = None):
@@ -282,6 +342,69 @@ class Moderation(commands.Cog):
         await channel.delete(reason=f"Nuked by {ctx.author}")
         embed = discord.Embed(title="💥 Channel Nuked", description="This channel has been cleared.", color=discord.Color.red())
         await new_channel.send(embed=embed)
+
+    @nuke.command(name="add", description="Schedule a channel to nuke (yes, this will reclone the channel) on a repeating interval.")
+    @commands.has_permissions(administrator=True)
+    @app_commands.describe(channel="Channel to schedule nuking", interval="How often, e.g. 12h, 1d", message="Message posted after each nuke")
+    async def nuke_add(self, ctx: commands.Context, channel: discord.TextChannel, interval: str, *, message: str = "This channel has been cleared."):
+        try:
+            delta = parse_duration(interval)
+        except ValueError:
+            return await ctx.send("Interval must end in s/m/h/d/w, e.g. 12h, 1d.")
+        interval_minutes = max(1, int(delta.total_seconds() // 60))
+        next_run = int(time.time() + delta.total_seconds())
+        await db.add_nuke_schedule(ctx.guild.id, channel.id, interval_minutes, message, next_run)
+        await ctx.send(
+            f"💣 {channel.mention} will nuke every `{interval}`. "
+            f"Next nuke: {discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(next_run), 'R')}"
+        )
+
+    @nuke.command(name="view", description="View the scheduled nuke message/timing for a channel.")
+    @commands.has_permissions(administrator=True)
+    @app_commands.describe(channel="Channel to check")
+    async def nuke_view(self, ctx: commands.Context, channel: discord.TextChannel):
+        row = await db.get_nuke_schedule(channel.id)
+        if row is None:
+            return await ctx.send(f"No scheduled nuke for {channel.mention}.")
+        embed = discord.Embed(title=f"Scheduled Nuke — #{channel.name}", color=discord.Color.red())
+        embed.add_field(name="Interval", value=f"Every {row['interval_minutes']} minutes", inline=False)
+        embed.add_field(name="Message after nuke", value=row["message"], inline=False)
+        embed.add_field(name="Next run", value=discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(row["next_run"]), "R"), inline=False)
+        await ctx.send(embed=embed)
+
+    @nuke.command(name="remove", description="Cancel a scheduled nuke for a channel.")
+    @commands.has_permissions(administrator=True)
+    @app_commands.describe(channel="Channel to stop nuking")
+    async def nuke_remove(self, ctx: commands.Context, channel: discord.TextChannel):
+        await db.remove_nuke_schedule(channel.id)
+        await ctx.send(f"Cancelled the scheduled nuke for {channel.mention}.")
+
+    @tasks.loop(minutes=1)
+    async def check_nuke_schedule(self):
+        due = await db.get_due_nuke_schedules(int(time.time()))
+        for entry in due:
+            guild = self.bot.get_guild(entry["guild_id"])
+            channel = guild.get_channel(entry["channel_id"]) if guild else None
+            if channel is None:
+                await db.remove_nuke_schedule(entry["channel_id"])
+                continue
+            try:
+                position = channel.position
+                new_channel = await channel.clone(reason="Scheduled nuke")
+                await new_channel.edit(position=position)
+                await channel.delete(reason="Scheduled nuke")
+                if entry["message"]:
+                    await new_channel.send(entry["message"])
+                # The channel gets a new ID after cloning, so re-key the schedule to it.
+                await db.remove_nuke_schedule(entry["channel_id"])
+                next_run = int(time.time()) + entry["interval_minutes"] * 60
+                await db.add_nuke_schedule(entry["guild_id"], new_channel.id, entry["interval_minutes"], entry["message"], next_run)
+            except discord.HTTPException:
+                continue
+
+    @check_nuke_schedule.before_loop
+    async def before_check_nuke_schedule(self):
+        await self.bot.wait_until_ready()
 
     # ---------- fix server ----------
 

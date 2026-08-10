@@ -143,39 +143,46 @@ class Filter(commands.Cog):
     @commands.hybrid_group(name="filter", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     async def filter_group(self, ctx: commands.Context):
-        words = await db.get_filter_words(ctx.guild.id)
+        await ctx.invoke(self.filter_list)
+
+    @filter_group.command(name="list", description="Show the global blocked word list (shared across every server).")
+    @commands.has_permissions(manage_guild=True)
+    async def filter_list(self, ctx: commands.Context):
+        words = await db.get_global_filter_words()
         config = await db.get_filter_config(ctx.guild.id)
         embed = discord.Embed(title="Filter Settings", color=discord.Color.blurple())
-        embed.add_field(name="Blocked words", value=", ".join(f"`{w}`" for w in words) or "None", inline=False)
-        embed.add_field(name="Invite filter", value="✅" if config["invites"] else "❌")
-        embed.add_field(name="Spam filter", value="✅" if config["spam"] else "❌")
+        embed.add_field(name=f"Blocked words ({len(words)}) — global, shared across all servers", value=", ".join(f"`{w}`" for w in words)[:1024] or "None", inline=False)
+        embed.add_field(name="Invite filter (this server)", value="✅" if config["invites"] else "❌")
+        embed.add_field(name="Spam filter (this server)", value="✅" if config["spam"] else "❌")
         await ctx.send(embed=embed)
 
-    @filter_group.command(name="add")
+    @filter_group.command(name="add", description="Add word(s) to the GLOBAL blocked list — applies to every server this bot is in.")
+    @commands.is_owner()
     @app_commands.describe(words="Word(s) to block — separate multiple with commas or new lines")
     async def filter_add(self, ctx: commands.Context, *, words: str):
         word_list = [w.strip() for w in re.split(r"[,\n]", words) if w.strip()]
         if not word_list:
             return await ctx.send("No valid words provided.")
         for word in word_list:
-            await db.add_filter_word(ctx.guild.id, word)
+            await db.add_global_filter_word(word)
         if len(word_list) == 1:
-            await ctx.send(f"Added `{word_list[0]}` to the blocked word list.")
+            await ctx.send(f"Added `{word_list[0]}` to the global blocked word list (applies everywhere).")
         else:
-            await ctx.send(f"Added {len(word_list)} words to the blocked word list.")
+            await ctx.send(f"Added {len(word_list)} words to the global blocked word list (applies everywhere).")
 
-    @filter_group.command(name="remove")
+    @filter_group.command(name="remove", description="Remove word(s) from the GLOBAL blocked list.")
+    @commands.is_owner()
     @app_commands.describe(words="Word(s) to unblock — separate multiple with commas or new lines")
     async def filter_remove(self, ctx: commands.Context, *, words: str):
         word_list = [w.strip() for w in re.split(r"[,\n]", words) if w.strip()]
         if not word_list:
             return await ctx.send("No valid words provided.")
         for word in word_list:
-            await db.remove_filter_word(ctx.guild.id, word)
+            await db.remove_global_filter_word(word)
         if len(word_list) == 1:
-            await ctx.send(f"Removed `{word_list[0]}` from the blocked word list.")
+            await ctx.send(f"Removed `{word_list[0]}` from the global blocked word list.")
         else:
-            await ctx.send(f"Removed {len(word_list)} words from the blocked word list.")
+            await ctx.send(f"Removed {len(word_list)} words from the global blocked word list.")
 
     @filter_group.command(name="invites")
     @app_commands.describe(state="on or off")
@@ -207,10 +214,10 @@ class Filter(commands.Cog):
 
     @tasks.loop(minutes=15)
     async def auto_scan(self):
+        global_words = await db.get_global_filter_words()
         for guild in self.bot.guilds:
-            words = await db.get_filter_words(guild.id)
             config = await db.get_filter_config(guild.id)
-            if not words and not config["invites"]:
+            if not global_words and not config["invites"]:
                 continue  # nothing this guild wants auto-checked
 
             for channel in guild.text_channels:
@@ -268,7 +275,7 @@ class Filter(commands.Cog):
 
         config = await db.get_filter_config(message.guild.id)
 
-        words = await db.get_filter_words(message.guild.id)
+        words = await db.get_global_filter_words()
         matched = find_filter_match(message.content, words) if words else None
         if matched:
             await self._punish(message, "a blocked word", WORD_TIMEOUT_MINUTES)
