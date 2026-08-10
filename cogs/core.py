@@ -43,26 +43,31 @@ class Core(commands.Cog):
             return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
         await interaction.response.send_modal(SayReplyModal(message))
 
-    @commands.hybrid_group(name="prefix", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="prefix",
+        description="View or change this server's command prefix.",
+        invoke_without_command=True,
+    )
     @commands.guild_only()
     async def prefix(self, ctx: commands.Context):
         row = await db.get_guild_config(ctx.guild.id)
-        await ctx.send(f"Current prefix: `{row['prefix']}`")
+        current = row["prefix"] if row and row["prefix"] else ","
+        await ctx.send(f"Current prefix: `{current}`")
 
-    @prefix.command(name="set", description="Set the prefix for this server.")
-    @commands.guild_only()
+    @prefix.command(
+        name="set",
+        description="Change the command prefix for this server.",
+    )
     @commands.has_permissions(manage_guild=True)
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(new_prefix="The new prefix for this server")
+    @app_commands.describe(new_prefix="The new prefix (1-5 characters).")
     async def prefix_set(self, ctx: commands.Context, new_prefix: str):
-        """Set the server's custom prefix for both prefix and slash-command help."""
         new_prefix = new_prefix.strip()
         if not new_prefix:
-            return await ctx.send("Please provide a prefix.")
+            return await ctx.send("Prefix cannot be empty.")
         if len(new_prefix) > 5:
             return await ctx.send("Prefix must be 5 characters or fewer.")
         if any(ch.isspace() for ch in new_prefix):
-            return await ctx.send("The prefix cannot contain spaces.")
+            return await ctx.send("Prefix cannot contain spaces.")
 
         await db.set_guild_config(ctx.guild.id, prefix=new_prefix)
         await ctx.send(f"Prefix updated to `{new_prefix}`.")
