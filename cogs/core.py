@@ -49,12 +49,21 @@ class Core(commands.Cog):
         row = await db.get_guild_config(ctx.guild.id)
         await ctx.send(f"Current prefix: `{row['prefix']}`")
 
-    @prefix.command(name="set")
+    @prefix.command(name="set", description="Set the prefix for this server.")
+    @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(new_prefix="The new prefix for this server")
     async def prefix_set(self, ctx: commands.Context, new_prefix: str):
+        """Set the server's custom prefix for both prefix and slash-command help."""
+        new_prefix = new_prefix.strip()
+        if not new_prefix:
+            return await ctx.send("Please provide a prefix.")
         if len(new_prefix) > 5:
             return await ctx.send("Prefix must be 5 characters or fewer.")
+        if any(ch.isspace() for ch in new_prefix):
+            return await ctx.send("The prefix cannot contain spaces.")
+
         await db.set_guild_config(ctx.guild.id, prefix=new_prefix)
         await ctx.send(f"Prefix updated to `{new_prefix}`.")
 
