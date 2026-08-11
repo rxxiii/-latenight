@@ -43,6 +43,49 @@ class Core(commands.Cog):
             return await interaction.response.send_message("You don't have permission to use this.", ephemeral=True)
         await interaction.response.send_modal(SayReplyModal(message))
 
+
+    @commands.hybrid_group(name="create", invoke_without_command=True, description="Create a saved bot settings profile.")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def create(self, ctx: commands.Context):
+        await ctx.send("Usage: `,create settings <name>`")
+
+    @create.command(name="settings", description="Save this server's bot settings.")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(name="Name for the settings profile")
+    async def create_settings(self, ctx: commands.Context, name: str):
+        name = name.strip()
+        if not name or len(name) > 50:
+            return await ctx.send("Settings name must be between 1 and 50 characters.")
+        if any(ch in name for ch in "\r\n"):
+            return await ctx.send("Settings name cannot contain line breaks.")
+        await db.create_settings_snapshot(ctx.guild.id, name)
+        await ctx.send(f"✅ Saved all bot configuration settings as `{name}`.")
+
+    @commands.hybrid_group(name="load", invoke_without_command=True, description="Load a saved bot settings profile.")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def load(self, ctx: commands.Context):
+        await ctx.send("Usage: `,load settings <name>`")
+
+    @load.command(name="settings", description="Load a saved server settings profile.")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(name="Name of the settings profile to load")
+    async def load_settings(self, ctx: commands.Context, name: str):
+        name = name.strip()
+        if not name or len(name) > 50:
+            return await ctx.send("Settings name must be between 1 and 50 characters.")
+        try:
+            loaded = await db.load_settings_snapshot(ctx.guild.id, name)
+        except Exception:
+            return await ctx.send("❌ I couldn't load that settings profile. Check the bot console for details.")
+        if not loaded:
+            return await ctx.send(f"❌ No settings profile named `{name}` exists in this server.")
+        await ctx.send(f"✅ Loaded settings profile `{name}`.")
+
+
     @commands.hybrid_group(name="prefix", invoke_without_command=True)
     @commands.guild_only()
     async def prefix(self, ctx: commands.Context):
