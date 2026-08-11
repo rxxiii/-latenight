@@ -362,6 +362,9 @@ class Database:
         introduced. CREATE TABLE IF NOT EXISTS only creates missing tables,
         it never alters existing ones, so new columns need to be added here."""
         migrations = [
+            # Prefix exists in current schemas, but add it for databases created
+            # by an older/custom build that did not have the column.
+            ("guild_config", "prefix", "TEXT DEFAULT ','"),
             ("guild_config", "jail_role_id", "INTEGER"),
             ("guild_config", "jail_channel_id", "INTEGER"),
             ("giveaways", "description", "TEXT"),
@@ -397,6 +400,16 @@ class Database:
                 await self.conn.commit()
             except aiosqlite.OperationalError:
                 pass  # column already exists
+
+        # Bot 38 changed the word filter from per-server to global. Copy the
+        # existing Bot 37 words forward once so upgrading does not silently
+        # lose every word that was already configured. INSERT OR IGNORE makes
+        # this safe to run every startup.
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO global_filter_words (word) "
+            "SELECT word FROM filter_words WHERE word IS NOT NULL AND TRIM(word) != ''"
+        )
+        await self.conn.commit()
 
     # ---------- guild config ----------
 

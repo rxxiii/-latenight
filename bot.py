@@ -11,6 +11,7 @@ import os
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 from dotenv import load_dotenv
 
 from database import db
@@ -82,6 +83,14 @@ class BleedClone(commands.Bot):
             except Exception:
                 log.exception("Failed to load extension %s", extension)
 
+        prefix_command = self.get_command("prefix")
+        if prefix_command is None:
+            log.error("PREFIX COMMAND FAILED TO REGISTER")
+        elif isinstance(prefix_command, commands.Group):
+            log.info("Prefix command registered with subcommands: %s", ", ".join(c.name for c in prefix_command.commands))
+        else:
+            log.info("Prefix command registered.")
+
         # Sync slash commands globally. During development, syncing to a
         # single guild (via GUILD_ID env var) is much faster than a global
         # sync, which can take up to an hour to propagate.
@@ -105,6 +114,27 @@ class BleedClone(commands.Bot):
         if before.content == after.content:
             return
         await self.process_commands(after)
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Make slash-command failures visible instead of looking like missing commands."""
+        if isinstance(error, app_commands.MissingPermissions):
+            message = "You don't have permission to use this command."
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            message = "I'm missing the Discord permissions required to do that."
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            message = f"Try again in {error.retry_after:.1f}s."
+        elif isinstance(error, app_commands.CheckFailure):
+            message = "You don't have permission to use this command."
+        else:
+            log.exception("Slash command failed", exc_info=error)
+            message = "Something went wrong while running that command. Check the bot console for details."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         # Without this, a failed permission check or bad argument fails
