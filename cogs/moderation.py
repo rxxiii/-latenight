@@ -74,7 +74,6 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="ban", description="Ban a member from the server.")
     @fake_or_real_permission("ban_members")
-    @commands.bot_has_permissions(ban_members=True)
     @app_commands.describe(
         member="Member to ban",
         delete_history="How much recent message history to delete, e.g. 1d, 7d (optional)",
@@ -99,8 +98,7 @@ class Moderation(commands.Cog):
         await ctx.send(f"🔨 Banned **{member}** — {reason}")
 
     @commands.hybrid_command(name="unban", description="Unban a user by ID.")
-    @commands.has_permissions(ban_members=True)
-    @commands.bot_has_permissions(ban_members=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(user_id="The ID of the user to unban")
     async def unban(self, ctx: commands.Context, user_id: str):
         user_id = user_id.strip("<@!>")
@@ -116,7 +114,6 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="kick", description="Kick a member from the server.")
     @fake_or_real_permission("kick_members")
-    @commands.bot_has_permissions(kick_members=True)
     @app_commands.describe(member="Member to kick", reason="Reason for the kick")
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         ok, error = hierarchy_ok(ctx, member)
@@ -130,7 +127,6 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="timeout", aliases=["mute"], description="Timeout a member for a duration (e.g. 10m, 2h, 1d).")
     @fake_or_real_permission("moderate_members")
-    @commands.bot_has_permissions(moderate_members=True)
     @app_commands.describe(member="Member to timeout", duration="e.g. 10m, 2h, 1d", reason="Reason for the timeout")
     async def timeout_cmd(self, ctx: commands.Context, member: discord.Member, duration: str = "10m", *, reason: str = "No reason provided"):
         ok, error = hierarchy_ok(ctx, member)
@@ -147,8 +143,7 @@ class Moderation(commands.Cog):
         await ctx.send(f"🔇 Timed out **{member}** for `{duration}` — {reason}")
 
     @commands.hybrid_command(name="untimeout", aliases=["unmute"], description="Remove a member's timeout.")
-    @commands.has_permissions(moderate_members=True)
-    @commands.bot_has_permissions(moderate_members=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(member="Member to remove timeout from", reason="Reason")
     async def untimeout_cmd(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         await member.timeout(None, reason=f"{ctx.author}: {reason}")
@@ -189,7 +184,7 @@ class Moderation(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="clearwarnings", description="Clear all warnings for a member.")
-    @commands.has_permissions(moderate_members=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(member="Member whose warnings to clear")
     async def clearwarnings(self, ctx: commands.Context, member: discord.Member):
         await db.clear_warnings(ctx.guild.id, member.id)
@@ -198,8 +193,7 @@ class Moderation(commands.Cog):
     # ---------- nickname ----------
 
     @commands.hybrid_command(name="nickname", aliases=["nick"], description="Change (or reset) a member's nickname.")
-    @commands.has_permissions(manage_nicknames=True)
-    @commands.bot_has_permissions(manage_nicknames=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(member="Member to rename", new_nickname="Leave blank to reset to their username")
     async def nickname(self, ctx: commands.Context, member: discord.Member, *, new_nickname: str = None):
         ok, error = hierarchy_ok(ctx, member)
@@ -212,8 +206,7 @@ class Moderation(commands.Cog):
             await ctx.send(f"Nickname for {member.mention} reset.")
 
     @commands.hybrid_command(name="forcenickname", aliases=["fn"], description="Lock a member's nickname — reverts it if they try to change it.")
-    @commands.has_permissions(manage_nicknames=True)
-    @commands.bot_has_permissions(manage_nicknames=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(member="Member to lock", new_nickname="Nickname to lock them to (leave blank to unlock)")
     async def forcenickname(self, ctx: commands.Context, member: discord.Member, *, new_nickname: str = None):
         ok, error = hierarchy_ok(ctx, member)
@@ -247,7 +240,6 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="purge", description="Bulk delete messages in this channel.")
     @fake_or_real_permission("manage_messages")
-    @commands.bot_has_permissions(manage_messages=True)
     @app_commands.describe(amount="Number of messages to delete (max 100)")
     async def purge(self, ctx: commands.Context, amount: commands.Range[int, 1, 100]):
         if ctx.interaction:
@@ -359,8 +351,7 @@ class Moderation(commands.Cog):
         name="lock",
         description="Lock the current channel, or use 'all' to lock every text channel. Staff roles stay able to type.",
     )
-    @commands.has_permissions(manage_channels=True)
-    @commands.bot_has_permissions(manage_channels=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(target="Use 'all' for every text channel, or leave blank for this channel")
     async def lock(self, ctx: commands.Context, target: str = None):
         if target and target.lower() == "all":
@@ -386,8 +377,7 @@ class Moderation(commands.Cog):
         name="unlock",
         description="Unlock the current channel, or use 'all' to unlock every text channel.",
     )
-    @commands.has_permissions(manage_channels=True)
-    @commands.bot_has_permissions(manage_channels=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(target="Use 'all' for every text channel, or leave blank for this channel")
     async def unlock(self, ctx: commands.Context, target: str = None):
         if target and target.lower() == "all":
@@ -410,8 +400,7 @@ class Moderation(commands.Cog):
         await ctx.send(f"🔓 Unlocked {channel.mention}.")
 
     @commands.hybrid_command(name="slowmode", description="Set slowmode delay for this channel (seconds).")
-    @commands.has_permissions(manage_channels=True)
-    @commands.bot_has_permissions(manage_channels=True)
+    @commands.has_permissions(administrator=True)
     @app_commands.describe(seconds="Delay in seconds (0 to disable, max 21600)")
     async def slowmode(self, ctx: commands.Context, seconds: commands.Range[int, 0, 21600]):
         await ctx.channel.edit(slowmode_delay=seconds)
@@ -444,7 +433,6 @@ class Moderation(commands.Cog):
         description="Nuke this channel, or manage scheduled nukes with add/view/remove.",
     )
     @commands.has_permissions(administrator=True)
-    @commands.bot_has_permissions(manage_channels=True)
     async def nuke(self, ctx: commands.Context):
         """Prefix: ,nuke immediately clones and replaces the current channel.
         Slash users can use /nuke add, /nuke view, and /nuke remove."""
@@ -457,7 +445,6 @@ class Moderation(commands.Cog):
 
     @nuke.command(name="add", description="Schedule a channel to be nuked repeatedly.")
     @commands.has_permissions(administrator=True)
-    @commands.bot_has_permissions(manage_channels=True)
     @app_commands.describe(
         channel="Channel to schedule nuking",
         interval="How often, e.g. 12h, 1d",
@@ -549,7 +536,6 @@ class Moderation(commands.Cog):
 
     @fix.command(name="server", description="Disable threads, activities, application commands, and external apps across every channel.")
     @commands.has_permissions(administrator=True)
-    @commands.bot_has_permissions(manage_channels=True, manage_roles=True)
     async def fix_server(self, ctx: commands.Context):
         count = 0
         for channel in ctx.guild.channels:
