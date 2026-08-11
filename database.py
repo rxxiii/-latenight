@@ -314,6 +314,11 @@ CREATE TABLE IF NOT EXISTS permitted_users (
     added_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS bot_coowners (
+    user_id INTEGER PRIMARY KEY,
+    added_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS global_filter_words (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     word TEXT UNIQUE
@@ -1308,6 +1313,32 @@ class Database:
 
     async def permit_list(self):
         cur = await self.conn.execute("SELECT * FROM permitted_users")
+        return await cur.fetchall()
+
+    # ---------- bot co-owners ----------
+    async def coowner_add(self, user_id: int, added_at: int):
+        await self.conn.execute(
+            "INSERT OR REPLACE INTO bot_coowners (user_id, added_at) VALUES (?, ?)",
+            (user_id, added_at),
+        )
+        await self.conn.commit()
+
+    async def coowner_remove(self, user_id: int):
+        await self.conn.execute(
+            "DELETE FROM bot_coowners WHERE user_id = ?", (user_id,)
+        )
+        await self.conn.commit()
+
+    async def coowner_check(self, user_id: int) -> bool:
+        cur = await self.conn.execute(
+            "SELECT 1 FROM bot_coowners WHERE user_id = ?", (user_id,)
+        )
+        return await cur.fetchone() is not None
+
+    async def coowner_list(self):
+        cur = await self.conn.execute(
+            "SELECT * FROM bot_coowners ORDER BY added_at ASC"
+        )
         return await cur.fetchall()
 
     # ---------- global filter words ----------

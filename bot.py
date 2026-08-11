@@ -48,6 +48,17 @@ class BleedClone(commands.Bot):
             help_command=commands.DefaultHelpCommand(),
         )
 
+    async def is_owner(self, user: discord.abc.User) -> bool:
+        """Treat configured bot co-owners as bot owners for every owner-only command.
+
+        This intentionally wraps the normal Discord.py owner check, so the
+        application owner keeps full control and co-owners receive the same
+        owner checks throughout all cogs.
+        """
+        if await super().is_owner(user):
+            return True
+        return await db.coowner_check(user.id)
+
     async def setup_hook(self):
         await db.connect()
         log.info("Database connected.")
