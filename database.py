@@ -341,6 +341,15 @@ CREATE TABLE IF NOT EXISTS nuke_schedule (
     next_run INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS settings_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    snapshot TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(guild_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS forced_nicknames (
     guild_id INTEGER,
     user_id INTEGER,
@@ -1431,6 +1440,98 @@ class Database:
     async def get_expired_jails(self, now):
         cur = await self.conn.execute(
             "SELECT * FROM jailed_members WHERE jail_until IS NOT NULL AND jail_until <= ?", (now,)
+        )
+        return await cur.fetchall()
+
+
+    # ---------- settings snapshots ----------
+    async def create_settings_snapshot(self, guild_id: int, name: str):
+        """Save all persistent, guild-scoped bot configuration.
+
+        Runtime/state tables (warnings, tickets, active giveaways, etc.) are
+        intentionally excluded. The snapshot is a configuration backup, not
+        a copy of server history.
+        """
+        tables = (
+            "guild_config",
+            "autoresponders",
+            "reaction_roles",
+            "button_roles",
+            "ticket_panels",
+            "antinuke_config",
+            "antiraid_config",
+            "filter_config",
+            "staff_roles",
+            "command_aliases",
+            "starboard_ignored",
+            "log_config",
+            "log_ignored",
+            "fake_permissions",
+            "welcome_messages",
+            "goodbye_messages",
+            "boost_messages",
+            "vanity_roles",
+            "nuke_schedule",
+        )
+        snapshot = {}
+        for table in tables:
+            cur = await self.conn.execute(
+                f"SELECT * FROM {table} WHERE guild_id = ?", (guild_id,)
+            )
+            rows = await cur.fetchall()
+            snapshot[table] = [dict(row) for row in rows]
+
+        payload = json.dumps(snapshot, ensure_ascii=False)
+        await self.conn.execute(
+            "INSERT INTO settings_snapshots (guild_id, name, snapshot, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(guild_id, name) DO UPDATE SET snapshot=excluded.snapshot, created_at=excluded.created_at",
+            (guild_id, name, payload, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_settings_snapshot(self, guild_id: int, name: str):
+        cur = await self.conn.execute(
+            "SELECT * FROM settings_snapshots WHERE guild_id = ? AND name = ?",
+            (guild_id, name),
+        )
+        return await cur.fetchone()
+
+    async def load_settings_snapshot(self, guild_id: int, name: str) -> bool:
+        row = await self.get_settings_snapshot(guild_id, name)
+        if row is None:
+            return False
+
+        snapshot = json.loads(row["snapshot"])
+        # Restore only configuration tables. Existing rows for this guild are
+        # replaced so disabled/removed settings from the snapshot stay disabled.
+        tables = tuple(snapshot.keys())
+        await self.conn.execute("BEGIN")
+        try:
+            for table in tables:
+                await self.conn.execute(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,))
+                rows = snapshot[table]
+                if not rows:
+                    continue
+                columns = list(rows[0].keys())
+                placeholders = ", ".join("?" for _ in columns)
+                column_sql = ", ".join(columns)
+                for item in rows:
+                    await self.conn.execute(
+                        f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
+                        [item.get(col) for col in columns],
+                    )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
+        return True
+
+    async def list_settings_snapshots(self, guild_id: int):
+        cur = await self.conn.execute(
+            "SELECT name, created_at FROM settings_snapshots "
+            "WHERE guild_id = ? ORDER BY name COLLATE NOCASE",
+            (guild_id,),
         )
         return await cur.fetchall()
 
