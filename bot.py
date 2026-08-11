@@ -102,18 +102,42 @@ class BleedClone(commands.Bot):
         else:
             log.info("Prefix command registered.")
 
-        # Sync slash commands globally. During development, syncing to a
-        # single guild (via GUILD_ID env var) is much faster than a global
-        # sync, which can take up to an hour to propagate.
+        # Slash-command sync
+        #
+        # When DEV_GUILD_ID is set, the bot is in development mode:
+        #   1. Copy the currently loaded commands to the dev guild.
+        #   2. Clear the global command tree and sync it, which removes stale
+        #      global commands left behind by older Bot 38 deployments.
+        #   3. Sync the dev guild. Guild sync replaces the guild's old command
+        #      set, removing stale/duplicate commands there as well.
+        #
+        # This prevents old global registrations from making commands appear
+        # duplicated and keeps development commands out of the global 100 limit.
         guild_id = os.getenv("DEV_GUILD_ID")
         if guild_id:
-            guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            log.info("Synced slash commands to dev guild %s", guild_id)
+            try:
+                guild = discord.Object(id=int(guild_id))
+
+                # Preserve the loaded command set for the dev guild.
+                self.tree.copy_global_to(guild=guild)
+                loaded_commands = len(self.tree.get_commands())
+
+                # Remove old global registrations created by previous versions.
+                self.tree.clear_commands(guild=None)
+                await self.tree.sync()
+                log.info("Cleared stale global slash commands.")
+
+                # Guild sync replaces the guild's registered command set.
+                synced = await self.tree.sync(guild=guild)
+                log.info(
+                    "Synced %d slash commands to dev guild %s (loaded: %d).",
+                    len(synced), guild_id, loaded_commands
+                )
+            except (ValueError, discord.HTTPException):
+                log.exception("Failed to sync slash commands to DEV_GUILD_ID=%s", guild_id)
         else:
-            await self.tree.sync()
-            log.info("Synced slash commands globally.")
+            synced = await self.tree.sync()
+            log.info("Synced %d slash commands globally.", len(synced))
 
     async def on_ready(self):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
