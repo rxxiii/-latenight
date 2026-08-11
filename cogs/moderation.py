@@ -9,6 +9,31 @@ from database import db
 from cogs.fakeperms import fake_or_real_permission
 
 
+
+async def _check_bot_can_ban(ctx, member: discord.Member) -> bool:
+    me = ctx.guild.me
+    if me is None:
+        await ctx.send("❌ I couldn't determine my permissions in this server.")
+        return False
+    if not me.guild_permissions.ban_members:
+        await ctx.send("❌ I need the **Ban Members** permission.")
+        return False
+    if member.id == ctx.guild.owner_id:
+        await ctx.send("❌ I can't ban the server owner.")
+        return False
+    if member.id == me.id:
+        await ctx.send("❌ I can't ban myself.")
+        return False
+    if member.top_role >= me.top_role:
+        await ctx.send(
+            f"❌ I can't ban {member.mention}. My highest role "
+            f"({me.top_role.mention}) must be **above** their highest role "
+            f"({member.top_role.mention})."
+        )
+        return False
+    return True
+
+
 def parse_duration(duration: str) -> datetime.timedelta:
     """Parse strings like '10m', '2h', '1d' into a timedelta."""
     units = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
