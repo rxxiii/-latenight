@@ -156,37 +156,67 @@ class Core(commands.Cog):
         embed.add_field(name="Boosts", value=guild.premium_subscription_count, inline=True)
         await ctx.send(embed=embed)
 
-    # ---------- global bot appearance (owner-only — affects every server) ----------
+    # ---------- server customization ----------
 
-    @commands.hybrid_command(name="setavatar", description="Change the bot's avatar EVERYWHERE (not just this server).")
-    @commands.is_owner()
-    @app_commands.describe(url="Direct image URL (png/jpg)")
-    async def setavatar(self, ctx: commands.Context, url: str):
+    async def _server_owner_or_bot_owner(self, ctx: commands.Context) -> bool:
+        if ctx.guild is None:
+            return False
+        return ctx.author.id == ctx.guild.owner_id or await self.bot.is_owner(ctx.author)
+
+    @commands.hybrid_group(name="customize", invoke_without_command=True, description="Customize this server's profile.")
+    @commands.guild_only()
+    async def customize(self, ctx: commands.Context):
+        await ctx.send_help(ctx.command)
+
+    @customize.command(name="avatar", description="Customize the server avatar/icon.")
+    @app_commands.describe(url="Direct image URL (PNG/JPG/GIF where supported)")
+    async def customize_avatar(self, ctx: commands.Context, url: str):
+        if not await self._server_owner_or_bot_owner(ctx):
+            return await ctx.send("Only the server owner or bot owner/co-owner can use this command.")
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
                         return await ctx.send("Couldn't download that image.")
                     data = await resp.read()
-            await self.bot.user.edit(avatar=data)
-            await ctx.send("✅ Avatar updated — this changes the bot everywhere it's added, not just this server.")
-        except discord.HTTPException as e:
-            await ctx.send(f"Couldn't update the avatar: {e}")
+            await ctx.guild.edit(icon=data, reason=f"Server avatar customized by {ctx.author}")
+            await ctx.send("✅ Server avatar updated.")
+        except (discord.HTTPException, ValueError, aiohttp.ClientError) as e:
+            await ctx.send(f"Couldn't update the server avatar: {e}")
 
-    @commands.hybrid_command(name="setbanner", description="Change the bot's banner EVERYWHERE (not just this server).")
-    @commands.is_owner()
-    @app_commands.describe(url="Direct image URL (png/jpg)")
-    async def setbanner(self, ctx: commands.Context, url: str):
+    @customize.command(name="banner", description="Customize the server banner.")
+    @app_commands.describe(url="Direct image URL (PNG/JPG/GIF where supported)")
+    async def customize_banner(self, ctx: commands.Context, url: str):
+        if not await self._server_owner_or_bot_owner(ctx):
+            return await ctx.send("Only the server owner or bot owner/co-owner can use this command.")
+        if "BANNER" not in ctx.guild.features:
+            return await ctx.send("This server doesn't have the Server Banner feature available.")
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
                         return await ctx.send("Couldn't download that image.")
                     data = await resp.read()
-            await self.bot.user.edit(banner=data)
-            await ctx.send("✅ Banner updated — this changes the bot everywhere it's added, not just this server.")
+            await ctx.guild.edit(banner=data, reason=f"Server banner customized by {ctx.author}")
+            await ctx.send("✅ Server banner updated.")
+        except (discord.HTTPException, ValueError, aiohttp.ClientError) as e:
+            await ctx.send(f"Couldn't update the server banner: {e}")
+
+    @customize.command(name="bio", description="Customize the server bio/description.")
+    @app_commands.describe(text="The server bio/description (leave blank to clear it)")
+    async def customize_bio(self, ctx: commands.Context, *, text: str = ""):
+        if not await self._server_owner_or_bot_owner(ctx):
+            return await ctx.send("Only the server owner or bot owner/co-owner can use this command.")
+        if "COMMUNITY" not in ctx.guild.features:
+            return await ctx.send("Discord only exposes a server description/bio for Community servers.")
+        text = text.strip()
+        if len(text) > 1200:
+            return await ctx.send("The server bio is too long (maximum 1200 characters).")
+        try:
+            await ctx.guild.edit(description=text or None, reason=f"Server bio customized by {ctx.author}")
+            await ctx.send("✅ Server bio updated.")
         except discord.HTTPException as e:
-            await ctx.send(f"Couldn't update the banner: {e}")
+            await ctx.send(f"Couldn't update the server bio: {e}")
 
 
 async def setup(bot: commands.Bot):

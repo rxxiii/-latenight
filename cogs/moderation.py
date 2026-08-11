@@ -194,13 +194,18 @@ class Moderation(commands.Cog):
         ok, error = hierarchy_ok(ctx, member)
         if not ok:
             return await ctx.send(error)
-        if new_nickname:
-            await member.edit(nick=new_nickname, reason=f"Force-nicknamed by {ctx.author}")
-            await db.set_forced_nickname(ctx.guild.id, member.id, new_nickname)
-            await ctx.send(f"🔒 {member.mention}'s nickname is locked to **{new_nickname}**.")
-        else:
+        # ,fn @member (or ,forcenickname @member) locks their CURRENT nickname.
+        # Use the literal word "clear" to remove an existing force-nickname.
+        if new_nickname and new_nickname.strip().lower() == "clear":
             await db.remove_forced_nickname(ctx.guild.id, member.id)
-            await ctx.send(f"🔓 {member.mention}'s nickname is no longer locked.")
+            return await ctx.send(f"🔓 {member.mention}\'s nickname is no longer locked.")
+
+        if not new_nickname:
+            new_nickname = member.nick or member.name
+
+        await member.edit(nick=new_nickname, reason=f"Force-nicknamed by {ctx.author}")
+        await db.set_forced_nickname(ctx.guild.id, member.id, new_nickname)
+        await ctx.send(f"🔒 {member.mention}\'s nickname is locked to **{new_nickname}**.")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -232,75 +237,116 @@ class Moderation(commands.Cog):
 
     # ---------- lock / unlock / slowmode ----------
 
-    async def _lockable_roles(self, guild: discord.Guild):
+    async def _lock_roles(self, guild: discord.Guild):
         staff_role_ids = set(await db.list_staff_roles(guild.id))
-        return [r for r in guild.roles if not r.managed and r.id not in staff_role_ids]
+        staff_roles = [r for r in guild.roles if not r.managed and r.id in staff_role_ids]
+        bot_role = guild.me.top_role if guild.me else None
+        locked_roles = [
+            r for r in guild.roles
+            if not r.managed and r != guild.default_role and r.id not in staff_role_ids and r != bot_role
+        ]
+        return locked_roles, staff_roles, bot_role
 
-    @commands.hybrid_command(name="lock", description="Lock the current channel (or 'all') — denies every role except bound staff roles.")
-    @commands.has_permissions(manage_channels=True)
-    @commands.bot_has_permissions(manage_channels=True)
-    @app_commands.describe(target="A channel to lock, 'all' to lock every channel, or leave blank for this channel")
-    async def lock(self, ctx: commands.Context, target: str = None):
-        roles = await self._lockable_roles(ctx.guild)
+    async def _apply_lock(self, channel: discord.TextChannel):
+        locked_roles, staff_roles, bot_role = await self._lock_roles(channel.guild)
 
-        if target and target.lower() == "all":
-            channel_count = 0
-            for channel in ctx.guild.text_channels:
-                changed = False
-                for role in roles:
-                    overwrite = channel.overwrites_for(role)
-                    if overwrite.send_messages is False:
-                        continue
-                    overwrite.send_messages = False
-                    try:
-                        await channel.set_permissions(role, overwrite=overwrite)
-                        changed = True
-                    except discord.HTTPException:
-                        pass
-                if changed:
-                    channel_count += 1
-            return await ctx.send(f"🔒 Locked {channel_count} channel(s) for every non-staff role.")
+        # Deny the base permission and every non-staff role explicitly. This
+        # prevents a role with a pre-existing allow from bypassing the lock.
+        everyone = channel.overwrites_for(channel.guild.default_role)
+        everyone.send_messages = False
+        await channel.set_permissions(channel.guild.default_role, overwrite=everyone)
 
-        channel = ctx.channel
-        if target:
-            try:
-                channel = await commands.TextChannelConverter().convert(ctx, target)
-            except commands.BadArgument:
-                return await ctx.send(f"Couldn't find a channel matching `{target}`.")
-
-        for role in roles:
+        for role in locked_roles:
             overwrite = channel.overwrites_for(role)
             overwrite.send_messages = False
             try:
                 await channel.set_permissions(role, overwrite=overwrite)
             except discord.HTTPException:
                 pass
-        await ctx.send(f"🔒 Locked {channel.mention} for every non-staff role.")
 
-    @commands.hybrid_command(name="unlock", description="Unlock the current channel, or every channel with 'all'.")
+        # Explicitly allow staff roles. Staff members also receive a member
+        # overwrite so a staff member who happens to have a normal/non-staff
+        # role is not blocked by that role's deny.
+        for role in staff_roles:
+            overwrite = channel.overwrites_for(role)
+            overwrite.send_messages = True
+            try:
+                await channel.set_permissions(role, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+
+        if bot_role and bot_role != channel.guild.default_role:
+            overwrite = channel.overwrites_for(bot_role)
+            overwrite.send_messages = True
+            try:
+                await channel.set_permissions(bot_role, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+
+        staff_role_ids = {r.id for r in staff_roles}
+        for member in channel.guild.members:
+            if member.bot and member.id == self.bot.user.id:
+                should_allow = True
+            else:
+                should_allow = any(r.id in staff_role_ids for r in member.roles)
+            if not should_allow:
+                continue
+            try:
+                overwrite = channel.overwrites_for(member)
+                overwrite.send_messages = True
+                await channel.set_permissions(member, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+
+    async def _apply_unlock(self, channel: discord.TextChannel):
+        locked_roles, staff_roles, bot_role = await self._lock_roles(channel.guild)
+        roles = [channel.guild.default_role, *locked_roles, *staff_roles]
+        if bot_role and bot_role != channel.guild.default_role:
+            roles.append(bot_role)
+        seen = set()
+        for role in roles:
+            if role.id in seen:
+                continue
+            seen.add(role.id)
+            overwrite = channel.overwrites_for(role)
+            overwrite.send_messages = None
+            try:
+                await channel.set_permissions(role, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+
+        staff_role_ids = {r.id for r in staff_roles}
+        for member in channel.guild.members:
+            if member.bot and member.id == self.bot.user.id:
+                should_clear = True
+            else:
+                should_clear = any(r.id in staff_role_ids for r in member.roles)
+            if not should_clear:
+                continue
+            try:
+                overwrite = channel.overwrites_for(member)
+                overwrite.send_messages = None
+                await channel.set_permissions(member, overwrite=overwrite)
+            except discord.HTTPException:
+                pass
+
+    @commands.hybrid_command(
+        name="lock",
+        description="Lock the current channel, or use 'all' to lock every text channel. Staff roles stay able to type.",
+    )
     @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
-    @app_commands.describe(target="A channel to unlock, 'all' to unlock every channel, or leave blank for this channel")
-    async def unlock(self, ctx: commands.Context, target: str = None):
-        roles = await self._lockable_roles(ctx.guild)
-
+    @app_commands.describe(target="Use 'all' for every text channel, or leave blank for this channel")
+    async def lock(self, ctx: commands.Context, target: str = None):
         if target and target.lower() == "all":
-            channel_count = 0
+            count = 0
             for channel in ctx.guild.text_channels:
-                changed = False
-                for role in roles:
-                    overwrite = channel.overwrites_for(role)
-                    if overwrite.send_messages is not False:
-                        continue
-                    overwrite.send_messages = None
-                    try:
-                        await channel.set_permissions(role, overwrite=overwrite)
-                        changed = True
-                    except discord.HTTPException:
-                        pass
-                if changed:
-                    channel_count += 1
-            return await ctx.send(f"🔓 Unlocked {channel_count} channel(s).")
+                try:
+                    await self._apply_lock(channel)
+                    count += 1
+                except discord.HTTPException:
+                    pass
+            return await ctx.send(f"🔒 Locked {count} text channel(s). Every non-staff role is blocked from typing; bound staff roles remain allowed.")
 
         channel = ctx.channel
         if target:
@@ -308,14 +354,34 @@ class Moderation(commands.Cog):
                 channel = await commands.TextChannelConverter().convert(ctx, target)
             except commands.BadArgument:
                 return await ctx.send(f"Couldn't find a channel matching `{target}`.")
+        await self._apply_lock(channel)
+        await ctx.send(f"🔒 Locked {channel.mention}. Every non-staff role is blocked from typing; bound staff roles remain allowed.")
 
-        for role in roles:
-            overwrite = channel.overwrites_for(role)
-            overwrite.send_messages = None
+    @commands.hybrid_command(
+        name="unlock",
+        description="Unlock the current channel, or use 'all' to unlock every text channel.",
+    )
+    @commands.has_permissions(manage_channels=True)
+    @commands.bot_has_permissions(manage_channels=True)
+    @app_commands.describe(target="Use 'all' for every text channel, or leave blank for this channel")
+    async def unlock(self, ctx: commands.Context, target: str = None):
+        if target and target.lower() == "all":
+            count = 0
+            for channel in ctx.guild.text_channels:
+                try:
+                    await self._apply_unlock(channel)
+                    count += 1
+                except discord.HTTPException:
+                    pass
+            return await ctx.send(f"🔓 Unlocked {count} text channel(s).")
+
+        channel = ctx.channel
+        if target:
             try:
-                await channel.set_permissions(role, overwrite=overwrite)
-            except discord.HTTPException:
-                pass
+                channel = await commands.TextChannelConverter().convert(ctx, target)
+            except commands.BadArgument:
+                return await ctx.send(f"Couldn't find a channel matching `{target}`.")
+        await self._apply_unlock(channel)
         await ctx.send(f"🔓 Unlocked {channel.mention}.")
 
     @commands.hybrid_command(name="slowmode", description="Set slowmode delay for this channel (seconds).")
@@ -329,33 +395,63 @@ class Moderation(commands.Cog):
         else:
             await ctx.send(f"🐌 Slowmode set to {seconds}s.")
 
-    # ---------- nuke ----------
+    # ---------- nuke / scheduled nuke ----------
 
-    @commands.hybrid_command(name="nuke", description="Clone this channel (same permissions) and delete the original.")
+    async def _execute_nuke(self, channel: discord.TextChannel, reason: str, message: str | None = None):
+        position = channel.position
+        new_channel = await channel.clone(reason=reason)
+        await new_channel.edit(position=position)
+        await channel.delete(reason=reason)
+        if message:
+            await new_channel.send(message)
+        else:
+            embed = discord.Embed(
+                title="💥 Channel Nuked",
+                description="This channel has been cleared.",
+                color=discord.Color.red(),
+            )
+            await new_channel.send(embed=embed)
+        return new_channel
+
+    @commands.hybrid_group(
+        name="nuke",
+        invoke_without_command=True,
+        description="Nuke this channel, or manage scheduled nukes with add/view/remove.",
+    )
     @commands.has_permissions(administrator=True)
     @commands.bot_has_permissions(manage_channels=True)
-    async def nuke(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        channel = channel or ctx.channel
-        position = channel.position
-        new_channel = await channel.clone(reason=f"Nuked by {ctx.author}")
-        await new_channel.edit(position=position)
-        await channel.delete(reason=f"Nuked by {ctx.author}")
-        embed = discord.Embed(title="💥 Channel Nuked", description="This channel has been cleared.", color=discord.Color.red())
-        await new_channel.send(embed=embed)
+    async def nuke(self, ctx: commands.Context):
+        """Prefix: ,nuke immediately clones and replaces the current channel.
+        Slash users can use /nuke add, /nuke view, and /nuke remove."""
+        if ctx.interaction:
+            return await ctx.send_help(ctx.command)
+        try:
+            await self._execute_nuke(ctx.channel, f"Nuked by {ctx.author}")
+        except discord.HTTPException as e:
+            await ctx.send(f"Couldn't nuke this channel: {e}")
 
-    @commands.hybrid_group(name="nukeschedule", invoke_without_command=True, description="Manage repeating scheduled channel nukes.")
+    @nuke.command(name="add", description="Schedule a channel to be nuked repeatedly.")
     @commands.has_permissions(administrator=True)
-    async def nukeschedule(self, ctx: commands.Context):
-        await ctx.send_help(ctx.command)
-
-    @nukeschedule.command(name="add", description="Schedule a channel to nuke on a repeating interval.")
-    @commands.has_permissions(administrator=True)
-    @app_commands.describe(channel="Channel to schedule nuking", interval="How often, e.g. 12h, 1d", message="Message posted after each nuke")
-    async def nuke_add(self, ctx: commands.Context, channel: discord.TextChannel, interval: str, *, message: str = "This channel has been cleared."):
+    @commands.bot_has_permissions(manage_channels=True)
+    @app_commands.describe(
+        channel="Channel to schedule nuking",
+        interval="How often, e.g. 12h, 1d",
+        message="Message posted after each scheduled nuke",
+    )
+    async def nuke_add(
+        self,
+        ctx: commands.Context,
+        channel: discord.TextChannel,
+        interval: str,
+        *,
+        message: str = "This channel has been cleared.",
+    ):
         try:
             delta = parse_duration(interval)
         except ValueError:
             return await ctx.send("Interval must end in s/m/h/d/w, e.g. 12h, 1d.")
+        if delta.total_seconds() < 60:
+            return await ctx.send("Scheduled nukes must be at least 1 minute apart.")
         interval_minutes = max(1, int(delta.total_seconds() // 60))
         next_run = int(time.time() + delta.total_seconds())
         await db.add_nuke_schedule(ctx.guild.id, channel.id, interval_minutes, message, next_run)
@@ -364,7 +460,7 @@ class Moderation(commands.Cog):
             f"Next nuke: {discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(next_run), 'R')}"
         )
 
-    @nukeschedule.command(name="view", description="View the scheduled nuke message/timing for a channel.")
+    @nuke.command(name="view", description="View the scheduled nuke for a channel.")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(channel="Channel to check")
     async def nuke_view(self, ctx: commands.Context, channel: discord.TextChannel):
@@ -374,10 +470,14 @@ class Moderation(commands.Cog):
         embed = discord.Embed(title=f"Scheduled Nuke — #{channel.name}", color=discord.Color.red())
         embed.add_field(name="Interval", value=f"Every {row['interval_minutes']} minutes", inline=False)
         embed.add_field(name="Message after nuke", value=row["message"], inline=False)
-        embed.add_field(name="Next run", value=discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(row["next_run"]), "R"), inline=False)
+        embed.add_field(
+            name="Next run",
+            value=discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(row["next_run"]), "R"),
+            inline=False,
+        )
         await ctx.send(embed=embed)
 
-    @nukeschedule.command(name="remove", description="Cancel a scheduled nuke for a channel.")
+    @nuke.command(name="remove", description="Cancel the scheduled nuke for a channel.")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(channel="Channel to stop nuking")
     async def nuke_remove(self, ctx: commands.Context, channel: discord.TextChannel):
@@ -394,16 +494,20 @@ class Moderation(commands.Cog):
                 await db.remove_nuke_schedule(entry["channel_id"])
                 continue
             try:
-                position = channel.position
-                new_channel = await channel.clone(reason="Scheduled nuke")
-                await new_channel.edit(position=position)
-                await channel.delete(reason="Scheduled nuke")
-                if entry["message"]:
-                    await new_channel.send(entry["message"])
-                # The channel gets a new ID after cloning, so re-key the schedule to it.
+                new_channel = await self._execute_nuke(
+                    channel,
+                    "Scheduled nuke",
+                    entry["message"],
+                )
                 await db.remove_nuke_schedule(entry["channel_id"])
                 next_run = int(time.time()) + entry["interval_minutes"] * 60
-                await db.add_nuke_schedule(entry["guild_id"], new_channel.id, entry["interval_minutes"], entry["message"], next_run)
+                await db.add_nuke_schedule(
+                    entry["guild_id"],
+                    new_channel.id,
+                    entry["interval_minutes"],
+                    entry["message"],
+                    next_run,
+                )
             except discord.HTTPException:
                 continue
 

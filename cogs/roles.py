@@ -84,6 +84,19 @@ class Roles(commands.Cog):
         if row is None:
             return
         guild = self.bot.get_guild(payload.guild_id)
+        if guild is None:
+            return
+        config = await db.get_guild_config(guild.id)
+        reaction_mute_role = guild.get_role(config["reaction_mute_role_id"]) if config["reaction_mute_role_id"] else None
+        if reaction_mute_role and reaction_mute_role in payload.member.roles:
+            try:
+                channel = guild.get_channel(payload.channel_id)
+                if channel:
+                    message = await channel.fetch_message(payload.message_id)
+                    await message.remove_reaction(payload.emoji, payload.member)
+            except discord.HTTPException:
+                pass
+            return
         role = guild.get_role(row["role_id"])
         if role:
             try:
@@ -195,6 +208,10 @@ class Roles(commands.Cog):
         if role is None:
             return await interaction.response.send_message("That role no longer exists.", ephemeral=True)
         member = interaction.user
+        config = await db.get_guild_config(guild.id)
+        reaction_mute_role = guild.get_role(config["reaction_mute_role_id"]) if config["reaction_mute_role_id"] else None
+        if reaction_mute_role and reaction_mute_role in member.roles:
+            return await interaction.response.send_message("You are reaction-muted and cannot use reaction/button roles.", ephemeral=True)
         if role in member.roles:
             await member.remove_roles(role, reason="Button role toggle")
             await interaction.response.send_message(f"Removed **{role.name}**.", ephemeral=True)

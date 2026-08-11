@@ -252,65 +252,115 @@ class OSINT(commands.Cog):
         if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
             return await ctx.send("Invalid Instagram username.")
 
-        # Primary: Instagram's own web_profile_info endpoint — returns clean
-        # JSON and is generally more reliable than parsing the HTML page.
-        try:
-            api_headers = dict(BROWSER_HEADERS)
-            api_headers["X-IG-App-ID"] = "936619743392459"
-            async with self.session.get(
-                f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}",
-                headers=api_headers,
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    user = (data.get("data") or {}).get("user")
-                    if user:
-                        embed = discord.Embed(
-                            title=f"{user.get('full_name') or username} (@{username})",
-                            color=discord.Color.from_rgb(225, 48, 108),
-                        )
-                        embed.add_field(name="Followers", value=str(user.get("edge_followed_by", {}).get("count", "Unknown")))
-                        embed.add_field(name="Following", value=str(user.get("edge_follow", {}).get("count", "Unknown")))
-                        embed.add_field(name="Posts", value=str(user.get("edge_owner_to_timeline_media", {}).get("count", "Unknown")))
-                        if user.get("is_private"):
-                            embed.add_field(name="Private account", value="🔒 Yes", inline=False)
-                        pic = user.get("profile_pic_url_hd") or user.get("profile_pic_url")
-                        if pic:
-                            embed.set_thumbnail(url=pic)
-                        embed.add_field(name="Profile", value=f"https://www.instagram.com/{username}/", inline=False)
-                        return await ctx.send(embed=embed)
-                elif resp.status == 404:
-                    return await ctx.send("No Instagram account found with that username.")
-        except Exception:
-            pass  # fall through to the HTML-scraping fallback below
+        # Instagram's undocumented public profile endpoint is fragile and can
+        # rate-limit datacenter IPs. Try both current hostnames and a mobile-ish
+        # browser UA before falling back to the normal profile HTML.
+        api_headers = dict(BROWSER_HEADERS)
+        api_headers.update({
+            "X-IG-App-ID": "936619743392459",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": f"https://www.instagram.com/{username}/",
+        })
 
-        # Fallback: parse the public profile page's meta tags.
+        for endpoint in (
+            f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
+            f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}",
+        ):
+            try:
+                async with self.session.get(endpoint, headers=api_headers) as resp:
+                    if resp.status == 404:
+                        return await ctx.send("No Instagram account found with that username.")
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json(content_type=None)
+                    user = (data.get("data") or {}).get("user")
+                    if not user:
+                        continue
+
+                    followers = (user.get("edge_followed_by") or {}).get("count")
+                    following = (user.get("edge_follow") or {}).get("count")
+                    posts = (user.get("edge_owner_to_timeline_media") or {}).get("count")
+                    private = bool(user.get("is_private"))
+                    display_name = user.get("full_name") or username
+
+                    title = f"{display_name} (@{username})"
+                    if private:
+                        title = f"🔒 {title}"
+                    embed = discord.Embed(
+                        title=title,
+                        color=discord.Color.from_rgb(225, 48, 108),
+                    )
+                    # Match the compact profile-card layout from the reference:
+                    # Posts → Following → Followers.
+                    embed.add_field(name="Posts", value=str(posts if posts is not None else 0), inline=False)
+                    embed.add_field(name="Following", value=str(following if following is not None else "Unknown"), inline=False)
+                    embed.add_field(name="Followers", value=str(followers if followers is not None else "Unknown"), inline=False)
+                    pic = user.get("profile_pic_url_hd") or user.get("profile_pic_url")
+                    if pic:
+                        embed.set_thumbnail(url=pic)
+                    if private:
+                        embed.set_footer(text="Private account")
+                    embed.add_field(name="Instagram", value=f"https://www.instagram.com/{username}/", inline=False)
+                    return await ctx.send(embed=embed)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, json.JSONDecodeError):
+                continue
+
+        # Fallback: parse the public profile page's OpenGraph metadata. This
+        # still works when the JSON endpoint is temporarily rate-limited.
         try:
-            async with self.session.get(f"https://www.instagram.com/{username}/") as resp:
+            async with self.session.get(
+                f"https://www.instagram.com/{username}/",
+                headers=BROWSER_HEADERS,
+                allow_redirects=True,
+            ) as resp:
                 if resp.status == 404:
                     return await ctx.send("No Instagram account found with that username.")
                 if resp.status != 200:
-                    return await ctx.send(f"Instagram returned an unexpected response (status {resp.status}) — it may be blocking the request.")
-                html = await resp.text()
-        except Exception:
+                    return await ctx.send(
+                        "Instagram is currently blocking profile lookups from the bot's network. Try again later."
+                    )
+                html = await resp.text(errors="ignore")
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             return await ctx.send("Couldn't reach Instagram right now.")
 
-        desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
-        img_match = re.search(r'<meta property="og:image" content="([^"]+)"', html)
-        if not desc_match:
+        def meta(property_name: str):
+            patterns = [
+                rf'<meta[^>]+property=["\']{re.escape(property_name)}["\'][^>]+content=["\']([^"\']*)["\']',
+                rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']{re.escape(property_name)}["\']',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    return match.group(1).replace("&amp;", "&")
+            return None
+
+        description = meta("og:description")
+        image_url = meta("og:image")
+        title_text = meta("og:title") or f"@{username}"
+        if not description:
             return await ctx.send("Couldn't read that profile — it may be private, or Instagram changed its page layout.")
 
-        stats_match = re.search(r"([\d,\.]+[KM]?) Followers, ([\d,\.]+[KM]?) Following, ([\d,\.]+[KM]?) Posts", desc_match.group(1))
-        embed = discord.Embed(title=f"@{username}", color=discord.Color.from_rgb(225, 48, 108))
-        if stats_match:
-            embed.add_field(name="Followers", value=stats_match.group(1))
-            embed.add_field(name="Following", value=stats_match.group(2))
-            embed.add_field(name="Posts", value=stats_match.group(3))
-        else:
-            embed.description = desc_match.group(1)[:200]
-        if img_match:
-            embed.set_thumbnail(url=img_match.group(1).replace("&amp;", "&"))
-        embed.add_field(name="Profile", value=f"https://www.instagram.com/{username}/", inline=False)
+        # Instagram has used both "Followers, Following, Posts" and other
+        # orderings in its metadata, so parse each stat independently.
+        def stat(label: str):
+            match = re.search(rf"([\d,.]+(?:[KMB])?)\s+{label}", description, re.IGNORECASE)
+            return match.group(1) if match else "Unknown"
+
+        private = bool(re.search(r"private", description, re.IGNORECASE))
+        embed = discord.Embed(
+            title=("🔒 " if private else "") + title_text,
+            color=discord.Color.from_rgb(225, 48, 108),
+        )
+        embed.add_field(name="Posts", value=stat("Posts"), inline=False)
+        embed.add_field(name="Following", value=stat("Following"), inline=False)
+        embed.add_field(name="Followers", value=stat("Followers"), inline=False)
+        if image_url:
+            embed.set_thumbnail(url=image_url)
+        if private:
+            embed.set_footer(text="Private account")
+        embed.add_field(name="Instagram", value=f"https://www.instagram.com/{username}/", inline=False)
         await ctx.send(embed=embed)
 
     # ==================== tiktok ====================

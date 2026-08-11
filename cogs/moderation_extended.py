@@ -39,6 +39,27 @@ class ModerationExtended(commands.Cog):
         self.check_temp_bans.cancel()
         self.check_expired_jails.cancel()
 
+    @commands.Cog.listener()
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
+        """Carry image/reaction mute role restrictions onto newly created channels."""
+        if not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+            return
+        row = await db.get_guild_config(channel.guild.id)
+        if row["image_mute_role_id"]:
+            role = channel.guild.get_role(row["image_mute_role_id"])
+            if role:
+                try:
+                    await channel.set_permissions(role, attach_files=False, embed_links=False, reason="Image mute role restriction")
+                except discord.HTTPException:
+                    pass
+        if row["reaction_mute_role_id"]:
+            role = channel.guild.get_role(row["reaction_mute_role_id"])
+            if role:
+                try:
+                    await channel.set_permissions(role, add_reactions=False, reason="Reaction mute role restriction")
+                except discord.HTTPException:
+                    pass
+
     # ---------- setup ----------
 
     @commands.hybrid_command(name="setup", description="Create the bot's mute role and jail role/channel for this server.")
