@@ -57,6 +57,28 @@ def hierarchy_ok(ctx: commands.Context, target: discord.Member):
     return True, ""
 
 
+def _human_duration(delta: datetime.timedelta) -> str:
+    total = int(delta.total_seconds())
+    for name, size in (
+        ("week", 604800), ("day", 86400), ("hour", 3600),
+        ("minute", 60), ("second", 1),
+    ):
+        if total >= size and total % size == 0:
+            value = total // size
+            return f"{value} {name}{'' if value == 1 else 's'}"
+    return str(delta)
+
+
+def _no_pings():
+    # Keeps mentions visually formatted without notifying the user/role.
+    return discord.AllowedMentions.none()
+
+
+async def _bleed_embed(ctx: commands.Context, text: str, color: discord.Color):
+    embed = discord.Embed(description=text, color=color)
+    await ctx.send(embed=embed, allowed_mentions=_no_pings())
+
+
 class Moderation(commands.Cog):
     """Ban, kick, timeout, warn, purge, nickname, and channel lock commands."""
 
@@ -96,7 +118,7 @@ class Moderation(commands.Cog):
 
         await member.ban(reason=f"{ctx.author}: {reason}", delete_message_seconds=delete_seconds)
         await db.log_mod_action(ctx.guild.id, ctx.author.id, "ban", int(time.time()))
-        await ctx.send(f"🔨 Banned **{member}** — {reason}")
+        await _bleed_embed(ctx, f"🔨 {ctx.author.mention}: Banned **{member.display_name}** — {reason}", discord.Color.red())
 
     @commands.hybrid_command(name="unban", description="Unban a user by ID.")
     @commands.has_permissions(ban_members=True)
@@ -124,7 +146,7 @@ class Moderation(commands.Cog):
             return await ctx.send(error)
         await member.kick(reason=f"{ctx.author}: {reason}")
         await db.log_mod_action(ctx.guild.id, ctx.author.id, "kick", int(time.time()))
-        await ctx.send(f"👢 Kicked **{member}** — {reason}")
+        await _bleed_embed(ctx, f"👢 {ctx.author.mention}: Kicked **{member.display_name}** — {reason}", discord.Color.red())
 
     # ---------- timeout ----------
 
@@ -144,7 +166,7 @@ class Moderation(commands.Cog):
             return await ctx.send("Timeouts can be at most 28 days.")
         await member.timeout(delta, reason=f"{ctx.author}: {reason}")
         await db.log_mod_action(ctx.guild.id, ctx.author.id, "timeout", int(time.time()))
-        await ctx.send(f"🔇 Timed out **{member}** for `{duration}` — {reason}")
+        await _bleed_embed(ctx, f"🔇 {ctx.author.mention}: {member.display_name} is now timed out for **{_human_duration(delta)}** — {reason}", discord.Color.red())
 
     @commands.hybrid_command(name="untimeout", aliases=["unmute"], description="Remove a member's timeout.")
     @commands.has_permissions(moderate_members=True)
@@ -152,7 +174,7 @@ class Moderation(commands.Cog):
     @app_commands.describe(member="Member to remove timeout from", reason="Reason")
     async def untimeout_cmd(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
         await member.timeout(None, reason=f"{ctx.author}: {reason}")
-        await ctx.send(f"🔊 Removed timeout for **{member}**. {reason}")
+        await _bleed_embed(ctx, f"🔊 {ctx.author.mention}: {member.display_name} is no longer timed out" + (f" — {reason}" if reason != "No reason provided" else ""), discord.Color.red())
 
     # ---------- warnings ----------
 
@@ -165,7 +187,7 @@ class Moderation(commands.Cog):
             return await ctx.send(error)
         await db.add_warning(ctx.guild.id, member.id, ctx.author.id, reason)
         await db.log_mod_action(ctx.guild.id, ctx.author.id, "warn", int(time.time()))
-        await ctx.send(f"⚠️ Warned **{member}** — {reason}")
+        await ctx.send(f"⚠️ Warned **{member.display_name}** — {reason}", allowed_mentions=_no_pings())
         try:
             await member.send(f"You were warned in **{ctx.guild.name}**: {reason}")
         except discord.Forbidden:

@@ -13,6 +13,11 @@ def _no_role_pings():
     return discord.AllowedMentions.none()
 
 
+async def _bleed_role_embed(ctx: commands.Context, text: str):
+    embed = discord.Embed(description=text, color=discord.Color.blurple())
+    await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
 async def find_role(guild: discord.Guild, query: str) -> discord.Role | None:
     """Resolve a role from a mention/ID/exact name first, then fall back to
     startswith/contains matching so ',role @user pic' can still find a role
@@ -150,18 +155,17 @@ class Utility(commands.Cog):
             return await ctx.send(error, allowed_mentions=_no_role_pings())
         if found_role.position >= ctx.guild.me.top_role.position:
             return await ctx.send("That role is higher than or equal to my own top role — I can't manage it.", allowed_mentions=_no_role_pings())
-        no_role_ping = discord.AllowedMentions(roles=False)
         if found_role in member.roles:
             await member.remove_roles(found_role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(
+            await _bleed_role_embed(
+                ctx,
                 f"➖ {ctx.author.mention}: Removed {found_role.mention} from {member.mention}",
-                allowed_mentions=no_role_ping,
             )
         else:
             await member.add_roles(found_role, reason=f"Toggled by {ctx.author}")
-            await ctx.send(
+            await _bleed_role_embed(
+                ctx,
                 f"➕ {ctx.author.mention}: Added {found_role.mention} to {member.mention}",
-                allowed_mentions=no_role_ping,
             )
 
     @role.command(name="create")
