@@ -8,7 +8,7 @@ from database import db
 
 
 class NotPermitted(commands.CheckFailure):
-    """Raised when someone who isn't the bot owner or explicitly permitted
+    """Raised when someone who isn't the bot owner, co-owner, or explicitly permitted
     tries to use any command."""
     pass
 
@@ -22,7 +22,7 @@ async def owner_or_permitted(ctx: commands.Context) -> bool:
 
 
 class Lockdown(commands.Cog):
-    """Restricts every command to the bot owner, plus anyone the owner has
+    """Restricts every command to the bot owner, co-owners, plus anyone the owner has
     explicitly permitted with ,permit add."""
 
     def __init__(self, bot: commands.Bot):
@@ -60,6 +60,40 @@ class Lockdown(commands.Cog):
         lines = [f"<@{r['user_id']}>" for r in rows]
         await ctx.send("Permitted users:\n" + "\n".join(lines))
 
+
+    @commands.hybrid_group(name="coowner", invoke_without_command=True)
+    @commands.is_owner()
+    async def coowner(self, ctx: commands.Context):
+        """Manage bot co-owners. Co-owners have the same owner-level access."""
+        await ctx.invoke(self.coowner_list)
+
+    @coowner.command(name="add")
+    @commands.is_owner()
+    @app_commands.describe(user="User to give full bot-owner access")
+    async def coowner_add(self, ctx: commands.Context, user: discord.User):
+        if await self.bot.is_owner(user):
+            # This also covers the real application owner.
+            return await ctx.send(f"ℹ️ {user.mention} already has bot-owner access.")
+        await db.coowner_add(user.id, int(time.time()))
+        await ctx.send(f"✅ {user.mention} is now a bot co-owner and has full owner-level access.")
+
+    @coowner.command(name="remove")
+    @commands.is_owner()
+    @app_commands.describe(user="User to remove from bot co-owner access")
+    async def coowner_remove(self, ctx: commands.Context, user: discord.User):
+        if await commands.Bot.is_owner(self.bot, user):
+            return await ctx.send("❌ You can't remove the actual Discord application owner.")
+        await db.coowner_remove(user.id)
+        await ctx.send(f"✅ {user.mention} is no longer a bot co-owner.")
+
+    @coowner.command(name="list")
+    @commands.is_owner()
+    async def coowner_list(self, ctx: commands.Context):
+        rows = await db.coowner_list()
+        if not rows:
+            return await ctx.send("No bot co-owners are configured.")
+        lines = [f"<@{r['user_id']}>" for r in rows]
+        await ctx.send("**Bot co-owners:**\n" + "\n".join(lines))
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Lockdown(bot))

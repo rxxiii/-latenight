@@ -119,7 +119,7 @@ SPAM_WINDOW_SECONDS = 5         # ...within T seconds = flood spam
 DUPLICATE_MESSAGE_COUNT = 3     # the same message repeated N times...
 DUPLICATE_WINDOW_SECONDS = 20   # ...within T seconds = duplicate spam
 MASS_MENTION_THRESHOLD = 5      # mentions in a single message = mention spam
-SPAM_TIMEOUT_MINUTES = 5
+SPAM_WARNING_REASON = "Spam (5 messages within 5 seconds)"
 INVITE_TIMEOUT_MINUTES = 5
 WORD_TIMEOUT_MINUTES = 5
 
@@ -262,6 +262,43 @@ class Filter(commands.Cog):
         self.message_times.pop(key, None)
         self.recent_contents.pop(key, None)
 
+    async def _punish_spam(self, message: discord.Message, reason: str) -> None:
+        """Handle spam with deletion + a warning, without timing out the user.
+
+        The spam filter intentionally does not purge or timeout. It removes the
+        triggering message, records a warning in the normal warning system, and
+        sends a short notice in the channel.
+        """
+        try:
+            await message.delete()
+        except discord.HTTPException:
+            pass
+
+        if isinstance(message.author, discord.Member):
+            try:
+                await db.add_warning(
+                    message.guild.id,
+                    message.author.id,
+                    self.bot.user.id if self.bot.user else 0,
+                    reason,
+                )
+            except Exception:
+                # The moderation action should still complete if the warning
+                # database write has a transient problem.
+                pass
+
+        try:
+            await message.channel.send(
+                f"⚠️ {message.author.mention} warned for spam — {reason}.",
+                delete_after=8,
+            )
+        except discord.HTTPException:
+            pass
+
+        key = (message.guild.id, message.author.id)
+        self.message_times.pop(key, None)
+        self.recent_contents.pop(key, None)
+
     async def _check_message(self, message: discord.Message) -> bool:
         """Runs the word-filter and invite-filter checks on a message
         (used for new messages, edited messages, and ,filter scan).
@@ -310,10 +347,7 @@ class Filter(commands.Cog):
             # Layer 1: mass mentions in a single message
             mention_count = len(message.mentions) + len(message.role_mentions)
             if mention_count >= MASS_MENTION_THRESHOLD:
-                await self._punish(
-                    message, "mass mentions", SPAM_TIMEOUT_MINUTES,
-                    purge_check=lambda m: m.author.id == message.author.id,
-                )
+                await self._punish_spam(message, "mass mentions")
                 return
 
             # Layer 2: message flood (N messages in T seconds)
@@ -322,10 +356,7 @@ class Filter(commands.Cog):
             while times and now - times[0] > SPAM_WINDOW_SECONDS:
                 times.popleft()
             if len(times) >= SPAM_MESSAGE_COUNT:
-                await self._punish(
-                    message, "sending messages too quickly", SPAM_TIMEOUT_MINUTES,
-                    purge_check=lambda m: m.author.id == message.author.id,
-                )
+                await self._punish_spam(message, SPAM_WARNING_REASON)
                 return
 
             # Layer 3: the same message repeated several times, even if
@@ -338,10 +369,7 @@ class Filter(commands.Cog):
                     recents.popleft()
                 matching = sum(1 for _, c in recents if c == normalized)
                 if matching >= DUPLICATE_MESSAGE_COUNT:
-                    await self._punish(
-                        message, "repeating the same message", SPAM_TIMEOUT_MINUTES,
-                        purge_check=lambda m: m.author.id == message.author.id and normalize_for_duplicate_check(m.content) == normalized,
-                    )
+                    await self._punish_spam(message, "repeating the same message")
                     return
 
     @commands.Cog.listener()

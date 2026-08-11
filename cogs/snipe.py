@@ -47,7 +47,7 @@ class Snipe(commands.Cog):
             "removed_at": time.time(),
         })
 
-    @commands.hybrid_command(name="s", description="Show the most recently deleted message in this channel.")
+    @commands.command(name="s", description="Show the most recently deleted message in this channel.")
     @app_commands.describe(index="How far back to look (1 = most recent, default 1)")
     async def snipe(self, ctx: commands.Context, index: commands.Range[int, 1, MAX_SNIPES_PER_CHANNEL] = 1):
         history = self.deleted_messages.get(ctx.channel.id)
@@ -65,7 +65,7 @@ class Snipe(commands.Cog):
         embed.set_footer(text=f"{index}/{len(history)} deleted messages")
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="rs", description="Show the most recently removed reaction in this channel.")
+    @commands.command(name="rs", description="Show the most recently removed reaction in this channel.")
     @app_commands.describe(index="How far back to look (1 = most recent, default 1)")
     async def reaction_snipe(self, ctx: commands.Context, index: commands.Range[int, 1, MAX_SNIPES_PER_CHANNEL] = 1):
         history = self.removed_reactions.get(ctx.channel.id)
@@ -82,7 +82,7 @@ class Snipe(commands.Cog):
         embed.set_footer(text=f"{index}/{len(history)} removed reactions")
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="cs", description="Clear this channel's snipe and reaction-snipe history.")
+    @commands.command(name="cs", description="Clear this channel's snipe and reaction-snipe history.")
     @commands.has_permissions(manage_messages=True)
     async def clear_snipes(self, ctx: commands.Context):
         self.deleted_messages.pop(ctx.channel.id, None)

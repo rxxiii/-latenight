@@ -357,7 +357,7 @@ class Music(commands.Cog):
         if not state.voice_client.is_playing() and state.current is None:
             await self._play_next(ctx.guild)
 
-    @commands.hybrid_command(name="skip", aliases=["next", "sk"], description="Skip to the next track.")
+    @commands.command(name="skip", aliases=["next", "sk"], description="Skip to the next track.")
     async def skip(self, ctx: commands.Context):
         state = self.get_state(ctx.guild.id)
         if state.voice_client and state.voice_client.is_playing():
