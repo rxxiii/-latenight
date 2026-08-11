@@ -331,7 +331,7 @@ class Moderation(commands.Cog):
 
     # ---------- nuke ----------
 
-    @commands.hybrid_group(name="nuke", invoke_without_command=True, description="Clone this channel (same permissions) and delete the original.")
+    @commands.hybrid_command(name="nuke", description="Clone this channel (same permissions) and delete the original.")
     @commands.has_permissions(administrator=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def nuke(self, ctx: commands.Context, channel: discord.TextChannel = None):
@@ -343,7 +343,12 @@ class Moderation(commands.Cog):
         embed = discord.Embed(title="💥 Channel Nuked", description="This channel has been cleared.", color=discord.Color.red())
         await new_channel.send(embed=embed)
 
-    @nuke.command(name="add", description="Schedule a channel to nuke (yes, this will reclone the channel) on a repeating interval.")
+    @commands.hybrid_group(name="nukeschedule", invoke_without_command=True, description="Manage repeating scheduled channel nukes.")
+    @commands.has_permissions(administrator=True)
+    async def nukeschedule(self, ctx: commands.Context):
+        await ctx.send_help(ctx.command)
+
+    @nukeschedule.command(name="add", description="Schedule a channel to nuke on a repeating interval.")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(channel="Channel to schedule nuking", interval="How often, e.g. 12h, 1d", message="Message posted after each nuke")
     async def nuke_add(self, ctx: commands.Context, channel: discord.TextChannel, interval: str, *, message: str = "This channel has been cleared."):
@@ -359,7 +364,7 @@ class Moderation(commands.Cog):
             f"Next nuke: {discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(next_run), 'R')}"
         )
 
-    @nuke.command(name="view", description="View the scheduled nuke message/timing for a channel.")
+    @nukeschedule.command(name="view", description="View the scheduled nuke message/timing for a channel.")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(channel="Channel to check")
     async def nuke_view(self, ctx: commands.Context, channel: discord.TextChannel):
@@ -372,7 +377,7 @@ class Moderation(commands.Cog):
         embed.add_field(name="Next run", value=discord.utils.format_dt(discord.utils.utcnow().fromtimestamp(row["next_run"]), "R"), inline=False)
         await ctx.send(embed=embed)
 
-    @nuke.command(name="remove", description="Cancel a scheduled nuke for a channel.")
+    @nukeschedule.command(name="remove", description="Cancel a scheduled nuke for a channel.")
     @commands.has_permissions(administrator=True)
     @app_commands.describe(channel="Channel to stop nuking")
     async def nuke_remove(self, ctx: commands.Context, channel: discord.TextChannel):
