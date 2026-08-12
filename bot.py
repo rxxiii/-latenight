@@ -102,42 +102,11 @@ class BleedClone(commands.Bot):
         else:
             log.info("Prefix command registered.")
 
-        # Slash-command sync
-        #
-        # When DEV_GUILD_ID is set, the bot is in development mode:
-        #   1. Copy the currently loaded commands to the dev guild.
-        #   2. Clear the global command tree and sync it, which removes stale
-        #      global commands left behind by older Bot 38 deployments.
-        #   3. Sync the dev guild. Guild sync replaces the guild's old command
-        #      set, removing stale/duplicate commands there as well.
-        #
-        # This prevents old global registrations from making commands appear
-        # duplicated and keeps development commands out of the global 100 limit.
-        guild_id = os.getenv("DEV_GUILD_ID")
-        if guild_id:
-            try:
-                guild = discord.Object(id=int(guild_id))
-
-                # Preserve the loaded command set for the dev guild.
-                self.tree.copy_global_to(guild=guild)
-                loaded_commands = len(self.tree.get_commands())
-
-                # Remove old global registrations created by previous versions.
-                self.tree.clear_commands(guild=None)
-                await self.tree.sync()
-                log.info("Cleared stale global slash commands.")
-
-                # Guild sync replaces the guild's registered command set.
-                synced = await self.tree.sync(guild=guild)
-                log.info(
-                    "Synced %d slash commands to dev guild %s (loaded: %d).",
-                    len(synced), guild_id, loaded_commands
-                )
-            except (ValueError, discord.HTTPException):
-                log.exception("Failed to sync slash commands to DEV_GUILD_ID=%s", guild_id)
-        else:
-            synced = await self.tree.sync()
-            log.info("Synced %d slash commands globally.", len(synced))
+        # Register application commands globally so they are
+        # available in every server where the bot is installed.
+        # DEV_GUILD_ID is intentionally not used for slash-command syncing.
+        synced = await self.tree.sync()
+        log.info("Synced %d slash commands globally.", len(synced))
 
     async def on_ready(self):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
@@ -173,7 +142,7 @@ class BleedClone(commands.Bot):
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         # Without this, a failed permission check or bad argument fails
-        # completely silently — the user just sees nothing happen.
+        # completely silently â the user just sees nothing happen.
         if isinstance(error, commands.CommandNotFound):
             return
         from cogs.blacklist import Blacklisted
@@ -198,7 +167,7 @@ class BleedClone(commands.Bot):
         if isinstance(error, commands.BadArgument):
             return await ctx.send(f"Bad argument: {error}")
         if isinstance(error, discord.Forbidden):
-            return await ctx.send("Discord won't let me do that — check my role position and permissions.")
+            return await ctx.send("Discord won't let me do that â check my role position and permissions.")
 
         log.exception("Unhandled command error in %s", ctx.command, exc_info=error)
         await ctx.send(f"Something went wrong running that command: `{error}`")
