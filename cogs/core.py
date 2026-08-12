@@ -61,7 +61,7 @@ class Core(commands.Cog):
         if any(ch in name for ch in "\r\n"):
             return await ctx.send("Settings name cannot contain line breaks.")
         await db.create_settings_snapshot(ctx.guild.id, name)
-        await ctx.send(f"✅ Saved all bot configuration settings as `{name}`.")
+        await ctx.send(f"â Saved all bot configuration settings as `{name}`.")
 
     @commands.hybrid_group(name="load", invoke_without_command=True, description="Load a saved bot settings profile.")
     @commands.guild_only()
@@ -80,10 +80,10 @@ class Core(commands.Cog):
         try:
             loaded = await db.load_settings_snapshot(ctx.guild.id, name)
         except Exception:
-            return await ctx.send("❌ I couldn't load that settings profile. Check the bot console for details.")
+            return await ctx.send("â I couldn't load that settings profile. Check the bot console for details.")
         if not loaded:
-            return await ctx.send(f"❌ No settings profile named `{name}` exists in this server.")
-        await ctx.send(f"✅ Loaded settings profile `{name}`.")
+            return await ctx.send(f"â No settings profile named `{name}` exists in this server.")
+        await ctx.send(f"â Loaded settings profile `{name}`.")
 
 
     @commands.hybrid_group(name="prefix", invoke_without_command=True)
@@ -149,7 +149,7 @@ class Core(commands.Cog):
                 await ctx.interaction.followup.send("Sent.", ephemeral=True)
             except discord.Forbidden:
                 # No direct channel access (e.g. a group chat via user-install)
-                # — fall back to a normal interaction response. This will show
+                # â fall back to a normal interaction response. This will show
                 # the "used /say" label, but it's the only way it can work here.
                 await ctx.interaction.followup.send(message)
         else:
@@ -223,7 +223,7 @@ class Core(commands.Cog):
                         return await ctx.send("Couldn't download that image.")
                     data = await resp.read()
             await ctx.guild.edit(icon=data, reason=f"Server avatar customized by {ctx.author}")
-            await ctx.send("✅ Server avatar updated.")
+            await ctx.send("â Server avatar updated.")
         except (discord.HTTPException, ValueError, aiohttp.ClientError) as e:
             await ctx.send(f"Couldn't update the server avatar: {e}")
 
@@ -241,7 +241,7 @@ class Core(commands.Cog):
                         return await ctx.send("Couldn't download that image.")
                     data = await resp.read()
             await ctx.guild.edit(banner=data, reason=f"Server banner customized by {ctx.author}")
-            await ctx.send("✅ Server banner updated.")
+            await ctx.send("â Server banner updated.")
         except (discord.HTTPException, ValueError, aiohttp.ClientError) as e:
             await ctx.send(f"Couldn't update the server banner: {e}")
 
@@ -257,7 +257,7 @@ class Core(commands.Cog):
             return await ctx.send("The server bio is too long (maximum 1200 characters).")
         try:
             await ctx.guild.edit(description=text or None, reason=f"Server bio customized by {ctx.author}")
-            await ctx.send("✅ Server bio updated.")
+            await ctx.send("â Server bio updated.")
         except discord.HTTPException as e:
             await ctx.send(f"Couldn't update the server bio: {e}")
 
