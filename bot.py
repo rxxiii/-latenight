@@ -102,11 +102,31 @@ class BleedClone(commands.Bot):
         else:
             log.info("Prefix command registered.")
 
-        # Register application commands globally so they are
-        # available in every server where the bot is installed.
-        # DEV_GUILD_ID is intentionally not used for slash-command syncing.
+        # Sync globally and also sync immediately to any guilds listed in
+        # DEV_GUILD_IDS. Use comma-separated guild IDs in Railway, e.g.
+        # DEV_GUILD_IDS=123456789012345678,987654321098765432
         synced = await self.tree.sync()
         log.info("Synced %d slash commands globally.", len(synced))
+
+        dev_guild_ids = os.getenv("DEV_GUILD_IDS", "")
+        for raw_id in dev_guild_ids.split(","):
+            raw_id = raw_id.strip()
+            if not raw_id:
+                continue
+            try:
+                guild_id = int(raw_id)
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                guild_synced = await self.tree.sync(guild=guild)
+                log.info(
+                    "Synced %d slash commands to dev guild %s",
+                    len(guild_synced),
+                    guild_id,
+                )
+            except ValueError:
+                log.error("Invalid guild ID in DEV_GUILD_IDS: %s", raw_id)
+            except Exception:
+                log.exception("Failed to sync slash commands to guild %s", raw_id)
 
     async def on_ready(self):
         log.info("Logged in as %s (id: %s)", self.user, self.user.id)
