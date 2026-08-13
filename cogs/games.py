@@ -340,6 +340,175 @@ COUNTRY_CODES = {
 }
 
 
+
+# Representative country points used for the distance-based scoring system.
+# These are intentionally approximate geographic reference points rather than
+# claims about Fizbo's private scoring implementation.
+COUNTRY_COORDS = {
+    "france": (46.2276, 2.2137),
+    "china": (35.8617, 104.1954),
+    "brazil": (-14.2350, -51.9253),
+    "india": (20.5937, 78.9629),
+    "australia": (-25.2744, 133.7751),
+    "united kingdom": (55.3781, -3.4360),
+    "united states": (37.0902, -95.7129),
+    "italy": (41.8719, 12.5674),
+    "peru": (-9.1900, -75.0152),
+    "united arab emirates": (23.4241, 53.8478),
+    "jordan": (30.5852, 36.2384),
+    "mexico": (23.6345, -102.5528),
+    "japan": (36.2048, 138.2529),
+    "germany": (51.1657, 10.4515),
+    "greece": (39.0742, 21.8243),
+    "south africa": (-30.5595, 22.9375),
+    "canada": (56.1304, -106.3468),
+    "cambodia": (12.5657, 104.9910),
+    "russia": (61.5240, 105.3188),
+    "spain": (40.4637, -3.7492),
+    "netherlands": (52.1326, 5.2913),
+    "egypt": (26.8206, 30.8025),
+    "turkey": (38.9637, 35.2433),
+    "thailand": (15.8700, 100.9925),
+    "vietnam": (14.0583, 108.2772),
+    "indonesia": (-0.7893, 113.9213),
+    "south korea": (35.9078, 127.7669),
+    "north korea": (40.3399, 127.5101),
+    "argentina": (-38.4161, -63.6167),
+    "chile": (-35.6751, -71.5430),
+    "colombia": (4.5709, -74.2973),
+    "nigeria": (9.0820, 8.6753),
+    "kenya": (-0.0236, 37.9062),
+    "morocco": (31.7917, -7.0926),
+    "saudi arabia": (23.8859, 45.0792),
+    "israel": (31.0461, 34.8516),
+    "iran": (32.4279, 53.6880),
+    "iraq": (33.2232, 43.6793),
+    "pakistan": (30.3753, 69.3451),
+    "bangladesh": (23.6850, 90.3563),
+    "philippines": (12.8797, 121.7740),
+    "malaysia": (4.2105, 101.9758),
+    "singapore": (1.3521, 103.8198),
+    "new zealand": (-40.9006, 174.8860),
+    "ireland": (53.1424, -7.6921),
+    "sweden": (60.1282, 18.6435),
+    "norway": (60.4720, 8.4689),
+    "denmark": (56.2639, 9.5018),
+    "finland": (61.9241, 25.7482),
+    "poland": (51.9194, 19.1451),
+    "ukraine": (48.3794, 31.1656),
+    "switzerland": (46.8182, 8.2275),
+    "austria": (47.5162, 14.5501),
+    "belgium": (50.5039, 4.4699),
+    "czech republic": (49.8175, 15.4730),
+    "hungary": (47.1625, 19.5033),
+    "romania": (45.9432, 24.9668),
+    "croatia": (45.1000, 15.2000),
+    "iceland": (64.9631, -19.0208),
+    "cuba": (21.5218, -77.7812),
+    "jamaica": (18.1096, -77.2975),
+    "ecuador": (-1.8312, -78.1834),
+    "venezuela": (6.4238, -66.5897),
+    "bolivia": (-16.2902, -63.5887),
+    "uruguay": (-32.5228, -55.7658),
+    "paraguay": (-23.4425, -58.4438),
+    "panama": (8.5380, -80.7821),
+    "costa rica": (9.7489, -83.7534),
+    "guatemala": (15.7835, -90.2308),
+    "ethiopia": (9.1450, 40.4897),
+    "ghana": (7.9465, -1.0232),
+    "algeria": (28.0339, 1.6596),
+    "tunisia": (33.8869, 9.5375),
+    "libya": (26.3351, 17.2283),
+    "sri lanka": (7.8731, 80.7718),
+    "nepal": (28.3949, 84.1240),
+    "myanmar": (21.9162, 95.9560),
+    "laos": (19.8563, 102.4955),
+    "mongolia": (46.8625, 103.8467),
+    "kazakhstan": (48.0196, 66.9237),
+    "afghanistan": (33.9391, 67.7100),
+    "syria": (34.8021, 38.9968),
+    "lebanon": (33.8547, 35.8623),
+    "qatar": (25.3548, 51.1839),
+    "kuwait": (29.3117, 47.4818),
+    "oman": (21.4735, 55.9754),
+    "yemen": (15.5527, 48.5164),
+    "georgia": (42.3154, 43.3569),
+    "armenia": (40.0691, 45.0382),
+    "azerbaijan": (40.1431, 47.5769),
+    "belarus": (53.7098, 27.9534),
+    "serbia": (44.0165, 21.0059),
+    "slovakia": (48.6690, 19.6990),
+    "slovenia": (46.1512, 14.9955),
+    "bulgaria": (42.7339, 25.4858),
+    "estonia": (58.5953, 25.0136),
+    "latvia": (56.8796, 24.6032),
+    "lithuania": (55.1694, 23.8813),
+    "luxembourg": (49.8153, 6.1296),
+    "malta": (35.9375, 14.3754),
+    "cyprus": (35.1264, 33.4299),
+    "monaco": (43.7384, 7.4246),
+    "andorra": (42.5063, 1.5218),
+    "liechtenstein": (47.1660, 9.5554),
+    "vatican": (41.9029, 12.4534),
+    "san marino": (43.9424, 12.4578),
+    "tanzania": (-6.3690, 34.8888),
+    "zambia": (-13.1339, 27.8493),
+}
+
+COUNTRY_CANONICAL_BY_CODE = {
+    code: canonical
+    for canonical, code in {
+        "france": "FR", "china": "CN", "brazil": "BR", "india": "IN",
+        "australia": "AU", "united kingdom": "GB", "united states": "US",
+        "italy": "IT", "peru": "PE", "united arab emirates": "AE",
+        "jordan": "JO", "mexico": "MX", "japan": "JP", "germany": "DE",
+        "greece": "GR", "south africa": "ZA", "canada": "CA", "cambodia": "KH",
+        "russia": "RU", "spain": "ES", "netherlands": "NL", "egypt": "EG",
+        "turkey": "TR", "thailand": "TH", "vietnam": "VN", "indonesia": "ID",
+        "south korea": "KR", "north korea": "KP", "argentina": "AR",
+        "chile": "CL", "colombia": "CO", "nigeria": "NG", "kenya": "KE",
+        "morocco": "MA", "saudi arabia": "SA", "israel": "IL", "iran": "IR",
+        "iraq": "IQ", "pakistan": "PK", "bangladesh": "BD", "philippines": "PH",
+        "malaysia": "MY", "singapore": "SG", "new zealand": "NZ",
+        "ireland": "IE", "sweden": "SE", "norway": "NO", "denmark": "DK",
+        "finland": "FI", "poland": "PL", "ukraine": "UA", "switzerland": "CH",
+        "austria": "AT", "belgium": "BE", "czech republic": "CZ",
+        "hungary": "HU", "romania": "RO", "croatia": "HR", "iceland": "IS",
+        "cuba": "CU", "jamaica": "JM", "ecuador": "EC", "venezuela": "VE",
+        "bolivia": "BO", "uruguay": "UY", "paraguay": "PY", "panama": "PA",
+        "costa rica": "CR", "guatemala": "GT", "ethiopia": "ET", "ghana": "GH",
+        "algeria": "DZ", "tunisia": "TN", "libya": "LY", "sri lanka": "LK",
+        "nepal": "NP", "myanmar": "MM", "laos": "LA", "mongolia": "MN",
+        "kazakhstan": "KZ", "afghanistan": "AF", "syria": "SY", "lebanon": "LB",
+        "qatar": "QA", "kuwait": "KW", "oman": "OM", "yemen": "YE",
+        "georgia": "GE", "armenia": "AM", "azerbaijan": "AZ", "belarus": "BY",
+        "serbia": "RS", "slovakia": "SK", "slovenia": "SI", "bulgaria": "BG",
+        "estonia": "EE", "latvia": "LV", "lithuania": "LT", "luxembourg": "LU",
+        "malta": "MT", "cyprus": "CY", "monaco": "MC", "andorra": "AD",
+        "liechtenstein": "LI", "vatican": "VA", "san marino": "SM",
+        "tanzania": "TZ", "zambia": "ZM",
+    }.items()
+}
+
+# Add common aliases to the existing code table.
+COUNTRY_CODES.update({
+    "czechia": "CZ",
+    "u.s.a.": "US",
+    "u.s.": "US",
+    "united states of america": "US",
+    "uae": "AE",
+    "south korea": "KR",
+    "republic of korea": "KR",
+    "russia": "RU",
+    "viet nam": "VN",
+    "the netherlands": "NL",
+    "tanzania": "TZ",
+    "zambia": "ZM",
+})
+
+# LANDMARKS remains the existing pool in the file. It contains real-world
+# photographed locations and is used as the photo source.
+
 class Games(commands.Cog):
     """Black Tea, Tic-Tac-Toe, and GeoGuess mini-games."""
 
@@ -411,119 +580,648 @@ class Games(commands.Cog):
             view=view,
         )
 
-    # ---------- geoguess ----------
+    # ---------- Guess The Country ----------
 
     async def _fetch_wiki_image(self, title: str):
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
+        """Fetch a real-world image from the Wikipedia article for a location."""
+        url = (
+            "https://en.wikipedia.org/api/rest_v1/page/summary/"
+            + urllib.parse.quote(title)
+        )
         try:
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with self.session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
                 if resp.status != 200:
-                    log.warning("GeoGuess: Wikipedia returned %s for %s", resp.status, title)
+                    log.warning(
+                        "GuessCountry: Wikipedia returned %s for %s",
+                        resp.status,
+                        title,
+                    )
                     return None
-                data = await resp.json()
-        except Exception as e:
-            log.warning("GeoGuess: request failed for %s: %s", title, e)
-            return None
-        thumb = data.get("originalimage") or data.get("thumbnail")
-        return thumb.get("source") if thumb else None
 
-    @commands.hybrid_command(name="geoguess", aliases=["geoguessr"], description="5-round game — guess the country shown in each photo.")
-    @app_commands.describe(points_per_round="Points awarded for a correct guess each round (default 3)")
-    async def geoguess(self, ctx: commands.Context, points_per_round: commands.Range[int, 1, 20] = 3):
-        if ctx.channel.id in self.active_geo:
-            return await ctx.send("A GeoGuess game is already running in this channel.")
-        self.active_geo.add(ctx.channel.id)
+                data = await resp.json(content_type=None)
+
+        except Exception as exc:
+            log.warning("GuessCountry: image request failed for %s: %s", title, exc)
+            return None
+
+        image = data.get("originalimage") or data.get("thumbnail")
+        if not image:
+            return None
+
+        return image.get("source")
+
+    @staticmethod
+    def _normalise_country(value: str) -> str:
+        """Normalize country guesses so harmless punctuation/casing differences work."""
+        value = value.casefold().strip()
+        value = value.replace("&", "and")
+        value = value.replace("’", "'")
+        value = "".join(ch if ch.isalnum() or ch in " -'" else " " for ch in value)
+        return " ".join(value.split())
+
+    @staticmethod
+    def _country_distance_km(country_a: str, country_b: str) -> float | None:
+        """Great-circle distance between representative points for two countries."""
+        a = COUNTRY_COORDS.get(country_a)
+        b = COUNTRY_COORDS.get(country_b)
+
+        if not a or not b:
+            return None
+
+        from math import asin, cos, radians, sin, sqrt
+
+        lat1, lon1 = map(radians, a)
+        lat2, lon2 = map(radians, b)
+
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+
+        h = (
+            sin(dlat / 2) ** 2
+            + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+        )
+
+        return 6371.0088 * 2 * asin(sqrt(h))
+
+    @staticmethod
+    def _country_points(distance_km: float | None) -> int:
+        """
+        Recreation scoring curve.
+
+        Exact country = 50 points.
+        As distance increases, the score smoothly falls toward zero.
+        This intentionally does not claim to reproduce a private Fizbo formula.
+        """
+        if distance_km is None:
+            return 0
+
+        if distance_km <= 75:
+            return 50
+
+        # Smooth geographic falloff. The 1500 km scale makes nearby countries
+        # substantially more valuable than distant guesses.
+        from math import exp
+
+        score = round(50 * exp(-distance_km / 1500))
+        return max(1, min(50, score))
+
+    @staticmethod
+    def _format_distance(distance_km: float | None) -> str:
+        if distance_km is None:
+            return "unknown distance"
+        if distance_km < 1000:
+            return f"{round(distance_km)} km"
+        return f"{distance_km / 1000:.1f}k km"
+
+    def _country_aliases_for(self, country: str) -> set[str]:
+        canonical = self._normalise_country(country)
+        return {
+            alias
+            for alias, code in COUNTRY_CODES.items()
+            if COUNTRY_CANONICAL_BY_CODE.get(code) == canonical
+        } | {canonical}
+
+    async def _run_guess_country_round(
+        self,
+        ctx: commands.Context,
+        round_number: int,
+        total_rounds: int,
+        location,
+        scores: dict[int, int],
+        names: dict[int, str],
+        round_results: list[dict],
+    ):
+        title, country, aliases = location
+
+        image_url = await self._fetch_wiki_image(title)
+        if not image_url:
+            return False
+
+        canonical_country = self._normalise_country(country)
+        valid_answers = {
+            self._normalise_country(country),
+            *[self._normalise_country(a) for a in aliases],
+        }
+
+        embed = discord.Embed(
+            title=f"🌎 Guess The Country • Round {round_number}/{total_rounds}",
+            description=(
+                "📸 **Where was this photograph taken?**\n\n"
+                "Send the **country name** in chat.\n"
+                "The closer your country is geographically to the answer, "
+                "the more points you earn."
+            ),
+            color=discord.Color.blurple(),
+        )
+        embed.set_image(url=image_url)
+        embed.add_field(
+            name="⏱️ Time",
+            value="25 seconds",
+            inline=True,
+        )
+        embed.add_field(
+            name="🏆 Maximum",
+            value="50 points",
+            inline=True,
+        )
+        embed.add_field(
+            name="🧠 Scoring",
+            value="Closer country = more points",
+            inline=True,
+        )
+        embed.set_footer(text="Type a country name • One scored guess per player")
+
+        round_message = await ctx.send(embed=embed)
+
+        # Each player can score only once in a round. We keep accepting messages
+        # from other users until the timer expires.
+        answered: set[int] = set()
+        guesses: list[tuple[discord.Member, str, int, float | None, bool]] = []
+
+        loop = asyncio.get_running_loop()
+        end_time = loop.time() + 25
+
+        def check(message: discord.Message):
+            return (
+                message.channel.id == ctx.channel.id
+                and not message.author.bot
+                and bool(message.content.strip())
+            )
+
+        while True:
+            remaining = end_time - loop.time()
+            if remaining <= 0:
+                break
+
+            try:
+                message = await self.bot.wait_for(
+                    "message",
+                    check=check,
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                break
+
+            user_id = message.author.id
+            active_players = getattr(self, "_guess_country_players", {})
+            if user_id not in active_players:
+                continue
+            if user_id in answered:
+                continue
+
+            guess = self._normalise_country(message.content)
+            guessed_code = COUNTRY_CODES.get(guess)
+
+            # Ignore ordinary conversation. Only recognized countries are scored.
+            if guessed_code is None:
+                continue
+
+            guessed_country = COUNTRY_CANONICAL_BY_CODE.get(guessed_code)
+            if not guessed_country:
+                continue
+
+            answered.add(user_id)
+
+            exact = guess in valid_answers
+            if exact:
+                distance = 0.0
+                points = 50
+            else:
+                distance = self._country_distance_km(
+                    canonical_country,
+                    guessed_country,
+                )
+                points = self._country_points(distance)
+
+            scores[user_id] = scores.get(user_id, 0) + points
+            names[user_id] = message.author.display_name
+
+            guesses.append(
+                (
+                    message.author,
+                    guessed_country,
+                    points,
+                    distance,
+                    exact,
+                )
+            )
+
+            # Keep the live embed compact so it doesn't exceed Discord limits.
+            sorted_guesses = sorted(
+                guesses,
+                key=lambda item: item[2],
+                reverse=True,
+            )
+
+            lines = []
+            for player, guessed, pts, dist, is_exact in sorted_guesses[-10:]:
+                if is_exact:
+                    suffix = "🎯 **EXACT**"
+                else:
+                    suffix = f"📍 {self._format_distance(dist)} away"
+
+                lines.append(
+                    f"{player.mention} — {flag_emoji(COUNTRY_CODES[guessed])} "
+                    f"**{guessed.title()}** — **+{pts}** • {suffix}"
+                )
+
+            embed.set_field_at(
+                0,
+                name="📨 Guesses received",
+                value="\n".join(lines) or "*Waiting for guesses...*",
+                inline=False,
+            )
+            embed.set_footer(
+                text=f"{len(answered)} player(s) have submitted a guess • "
+                     "One scored guess per player"
+            )
+
+            try:
+                await round_message.edit(
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.HTTPException:
+                pass
+
+        # Reveal and round leaderboard.
+        round_results.append({
+            "round": round_number,
+            "country": country,
+            "guesses": guesses,
+        })
+
+        if guesses:
+            result_lines = []
+            for player, guessed, pts, dist, exact in sorted(
+                guesses,
+                key=lambda item: item[2],
+                reverse=True,
+            ):
+                result_lines.append(
+                    f"{player.mention} — {flag_emoji(COUNTRY_CODES[guessed])} "
+                    f"{guessed.title()} → **+{pts}**"
+                    + (" 🎯" if exact else f" ({self._format_distance(dist)})")
+                )
+
+            result_embed = discord.Embed(
+                title=f"📍 Round {round_number} complete",
+                description=(
+                    f"The correct country was **{country}** "
+                    f"{flag_emoji(COUNTRY_CODES.get(canonical_country, ''))}\n\n"
+                    + "\n".join(result_lines[:15])
+                ),
+                color=discord.Color.green(),
+            )
+        else:
+            result_embed = discord.Embed(
+                title=f"📍 Round {round_number} complete",
+                description=(
+                    f"The correct country was **{country}** "
+                    f"{flag_emoji(COUNTRY_CODES.get(canonical_country, ''))}\n\n"
+                    "Nobody submitted a recognized country guess."
+                ),
+                color=discord.Color.orange(),
+            )
+
+        await ctx.send(embed=result_embed)
+
+        # Current overall scoreboard.
+        if scores and round_number < total_rounds:
+            leaderboard = sorted(
+                scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+
+            board = []
+            medals = ["🥇", "🥈", "🥉"]
+            for index, (uid, points) in enumerate(leaderboard[:10]):
+                medal = medals[index] if index < 3 else f"`{index + 1}.`"
+                board.append(f"{medal} **{names.get(uid, str(uid))}** — {points} pts")
+
+            await ctx.send(
+                embed=discord.Embed(
+                    title="📊 Overall scoreboard",
+                    description="\n".join(board),
+                    color=discord.Color.blurple(),
+                )
+            )
+
+        return True
+
+    @commands.hybrid_command(
+        name="guesscountry",
+        aliases=["geoguess", "geoguessr", "guessthecountry"],
+        description="6-round multiplayer photo-based country guessing game.",
+    )
+    @app_commands.describe(
+        lobby_seconds="How long players have to join the game (10–90 seconds).",
+    )
+    async def geoguess(
+        self,
+        ctx: commands.Context,
+        lobby_seconds: commands.Range[int, 10, 90] = 30,
+    ):
+        """
+        Multiplayer Guess The Country.
+
+        Six rounds. Players join the lobby, each round shows a real-world
+        location photograph, and guesses are scored by geographic closeness.
+        """
+        channel_id = ctx.channel.id
+
+        if channel_id in self.active_geo:
+            return await ctx.send(
+                "🌎 A **Guess The Country** game is already running in this channel."
+            )
+
+        self.active_geo.add(channel_id)
 
         try:
-            scores: dict[int, int] = {}
-            names: dict[int, str] = {}
+            # ---------------- Lobby ----------------
+            players: dict[int, discord.Member] = {ctx.author.id: ctx.author}
+
+            class LobbyView(discord.ui.View):
+                def __init__(self, owner_id: int):
+                    super().__init__(timeout=lobby_seconds)
+                    self.owner_id = owner_id
+                    self.started = asyncio.Event()
+                    self.cancelled = False
+
+                def refresh_button(self):
+                    if self.join_button:
+                        self.join_button.label = f"Join Game ({len(players)}/8)"
+
+                @discord.ui.button(
+                    label="Join Game (1/8)",
+                    style=discord.ButtonStyle.success,
+                    emoji="🎮",
+                )
+                async def join_button(
+                    self,
+                    interaction: discord.Interaction,
+                    button: discord.ui.Button,
+                ):
+                    if interaction.user.bot:
+                        return
+
+                    if interaction.user.id not in players:
+                        if len(players) >= 8:
+                            return await interaction.response.send_message(
+                                "The lobby is full (8 players).",
+                                ephemeral=True,
+                            )
+                        players[interaction.user.id] = interaction.user
+
+                    self.refresh_button()
+                    await interaction.response.edit_message(
+                        embed=make_lobby_embed(),
+                        view=self,
+                    )
+
+                @discord.ui.button(
+                    label="Start Now",
+                    style=discord.ButtonStyle.primary,
+                    emoji="▶️",
+                )
+                async def start_button(
+                    self,
+                    interaction: discord.Interaction,
+                    button: discord.ui.Button,
+                ):
+                    if interaction.user.id != self.owner_id:
+                        return await interaction.response.send_message(
+                            "Only the person who started the game can start it early.",
+                            ephemeral=True,
+                        )
+
+                    if len(players) < 2:
+                        return await interaction.response.send_message(
+                            "You need at least **2 players**.",
+                            ephemeral=True,
+                        )
+
+                    self.started.set()
+                    self.stop()
+                    await interaction.response.defer()
+
+                @discord.ui.button(
+                    label="Cancel",
+                    style=discord.ButtonStyle.danger,
+                    emoji="✖️",
+                )
+                async def cancel_button(
+                    self,
+                    interaction: discord.Interaction,
+                    button: discord.ui.Button,
+                ):
+                    if interaction.user.id != self.owner_id:
+                        return await interaction.response.send_message(
+                            "Only the game host can cancel this game.",
+                            ephemeral=True,
+                        )
+
+                    self.cancelled = True
+                    self.started.set()
+                    self.stop()
+                    await interaction.response.defer()
+
+            def make_lobby_embed():
+                mentions = "\n".join(
+                    f"• {member.mention}" for member in players.values()
+                )
+
+                return discord.Embed(
+                    title="🌎 GUESS THE COUNTRY",
+                    description=(
+                        "A new **6-round** photo geography game is starting!\n\n"
+                        "**How it works**\n"
+                        "📸 A real-world photograph appears each round.\n"
+                        "🌍 Guess the country where it was taken.\n"
+                        "📍 The geographically closer your guess is, "
+                        "the more points you earn.\n"
+                        "🏆 Highest total after round 6 wins.\n\n"
+                        f"**Players ({len(players)}/8)**\n{mentions}"
+                    ),
+                    color=discord.Color.blurple(),
+                ).set_footer(
+                    text=f"Game starts in {lobby_seconds}s • Minimum 2 players"
+                )
+
+            lobby = LobbyView(ctx.author.id)
+            lobby.refresh_button()
+
+            lobby_message = await ctx.send(
+                embed=make_lobby_embed(),
+                view=lobby,
+            )
+
+            try:
+                await asyncio.wait_for(
+                    lobby.started.wait(),
+                    timeout=lobby_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+            lobby.stop()
+
+            if lobby.cancelled:
+                return await lobby_message.edit(
+                    embed=discord.Embed(
+                        title="🌎 Guess The Country",
+                        description="Game cancelled by the host.",
+                        color=discord.Color.red(),
+                    ),
+                    view=None,
+                )
+
+            if len(players) < 2:
+                return await lobby_message.edit(
+                    embed=discord.Embed(
+                        title="🌎 Guess The Country",
+                        description=(
+                            "The game did not start because at least **2 players** "
+                            "are required."
+                        ),
+                        color=discord.Color.orange(),
+                    ),
+                    view=None,
+                )
+
+            await lobby_message.edit(
+                embed=discord.Embed(
+                    title="🌎 Guess The Country",
+                    description=(
+                        f"**{len(players)} players** are locked in!\n"
+                        "Get ready for **6 rounds** of real-world photo geography."
+                    ),
+                    color=discord.Color.green(),
+                ),
+                view=None,
+            )
+
+            # ---------------- Game ----------------
+            scores: dict[int, int] = {uid: 0 for uid in players}
+            self._guess_country_players = players
+            names: dict[int, str] = {
+                uid: member.display_name for uid, member in players.items()
+            }
+            round_results: list[dict] = []
+
             pool = LANDMARKS.copy()
             random.shuffle(pool)
 
-            await ctx.send("🌍 **GeoGuess** starting — 5 rounds, guess the **country** shown in each photo! Everyone has **20 seconds** per round.")
-
             rounds_played = 0
-            for title, country, aliases in pool:
-                if rounds_played >= 5:
+
+            for location in pool:
+                if rounds_played >= 6:
                     break
-                image_url = await self._fetch_wiki_image(title)
-                if image_url is None:
+
+                success = await self._run_guess_country_round(
+                    ctx,
+                    rounds_played + 1,
+                    6,
+                    location,
+                    scores,
+                    names,
+                    round_results,
+                )
+
+                if not success:
                     continue
+
                 rounds_played += 1
 
-                embed = discord.Embed(title=f"Round {rounds_played}/5 — Where is this?", color=discord.Color.green())
-                embed.set_image(url=image_url)
-                embed.add_field(name="Guesses", value="*Waiting for guesses...*", inline=False)
-                round_message = await ctx.send(embed=embed)
-
-                valid_answers = {country.lower()} | {a.lower() for a in aliases}
-                guess_lines: list[str] = []
-                correct_this_round: list[discord.Member] = []
-                seen_correct: set[int] = set()
-
-                def check(m):
-                    return m.channel.id == ctx.channel.id and not m.author.bot and m.content.strip()
-
-                loop = asyncio.get_event_loop()
-                end_time = loop.time() + 20
-                no_ping = discord.AllowedMentions(users=False)
-
-                while True:
-                    remaining = end_time - loop.time()
-                    if remaining <= 0:
-                        break
-                    try:
-                        msg = await self.bot.wait_for("message", check=check, timeout=remaining)
-                    except asyncio.TimeoutError:
-                        break
-
-                    guess_text = msg.content.strip()
-                    guess_lower = guess_text.lower()
-                    is_correct = guess_lower in valid_answers
-                    iso = COUNTRY_CODES.get(guess_lower)
-
-                    if not is_correct and iso is None:
-                        continue  # not a recognized country name — ignore, don't clutter the list
-
-                    flag = flag_emoji(iso) + " " if iso else ""
-                    line = f"{flag}{msg.author.mention}: {guess_text}"
-                    if is_correct:
-                        line += " ✅"
-                        if msg.author.id not in seen_correct:
-                            seen_correct.add(msg.author.id)
-                            correct_this_round.append(msg.author)
-                            scores[msg.author.id] = scores.get(msg.author.id, 0) + points_per_round
-                            names[msg.author.id] = msg.author.display_name
-                    guess_lines.append(line)
-
-                    embed.set_field_at(0, name="Guesses", value="\n".join(guess_lines[-15:]), inline=False)
-                    try:
-                        await round_message.edit(embed=embed, allowed_mentions=no_ping)
-                    except discord.HTTPException:
-                        pass
-
-                if correct_this_round:
-                    mentions = ", ".join(p.mention for p in correct_this_round)
-                    await ctx.send(f"⏱️ Round over! It was **{country}**. Correct: {mentions} (+{points_per_round} each)", allowed_mentions=no_ping)
-                else:
-                    await ctx.send(f"⏱️ Round over! No one got it — it was **{country}**.")
-
-                if scores and rounds_played < 5:
-                    standings = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-                    lines = [f"{i + 1}. {names[uid]} — {pts} pts" for i, (uid, pts) in enumerate(standings[:5])]
-                    await ctx.send("**Scoreboard so far:**\n" + "\n".join(lines))
+            if rounds_played < 6:
+                await ctx.send(
+                    f"⚠️ Only **{rounds_played}/6** rounds could be loaded because "
+                    "some location photos were unavailable."
+                )
 
             if rounds_played == 0:
-                return await ctx.send("Couldn't load any location images right now — try again in a bit.")
-            if not scores:
-                return await ctx.send("Game over — no one scored any points!")
+                return await ctx.send(
+                    "❌ I couldn't load any location photos right now. "
+                    "Please try again later."
+                )
 
-            leaderboard = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-            lines = [f"**{i + 1}.** {names[uid]} — {pts} pts" for i, (uid, pts) in enumerate(leaderboard)]
-            embed = discord.Embed(title="🏁 GeoGuess Results", description="\n".join(lines), color=discord.Color.gold())
-            await ctx.send(embed=embed)
+            # ---------------- Final results ----------------
+            leaderboard = sorted(
+                scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+
+            # Only players who actually participated in the lobby are displayed.
+            leaderboard = [
+                (uid, points)
+                for uid, points in leaderboard
+                if uid in players
+            ]
+
+            medals = ["🥇", "🥈", "🥉"]
+            lines = []
+
+            for index, (uid, points) in enumerate(leaderboard):
+                if index < 3:
+                    prefix = medals[index]
+                else:
+                    prefix = f"`{index + 1}.`"
+
+                lines.append(
+                    f"{prefix} **{names.get(uid, players[uid].display_name)}** "
+                    f"— **{points} pts**"
+                )
+
+            winner = leaderboard[0] if leaderboard else None
+
+            final = discord.Embed(
+                title="🏁 GUESS THE COUNTRY — FINAL RESULTS",
+                description="\n".join(lines) or "No scores recorded.",
+                color=discord.Color.gold(),
+            )
+
+            if winner:
+                final.add_field(
+                    name="🏆 Winner",
+                    value=(
+                        f"**{names.get(winner[0], players[winner[0]].display_name)}** "
+                        f"with **{winner[1]} points**!"
+                    ),
+                    inline=False,
+                )
+
+            final.add_field(
+                name="🎮 Game",
+                value=f"{rounds_played}/6 rounds completed",
+                inline=True,
+            )
+            final.add_field(
+                name="👥 Players",
+                value=str(len(players)),
+                inline=True,
+            )
+            final.set_footer(
+                text="Guess The Country • closer country guesses earn more points"
+            )
+
+            await ctx.send(embed=final)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Guess The Country crashed in channel %s", channel_id)
+            await ctx.send(
+                "❌ Something went wrong while running Guess The Country. "
+                "Check the bot logs for details."
+            )
         finally:
-            self.active_geo.discard(ctx.channel.id)
+            self._guess_country_players = {}
+            self.active_geo.discard(channel_id)
 
 
 async def setup(bot: commands.Bot):
