@@ -35,15 +35,25 @@ HOMOGLYPH_MAP = str.maketrans({
 NON_LETTER = re.compile(r"[^a-z]")
 NON_LETTER_KEEP_SPACE_STAR = re.compile(r"[^a-z\s*]")
 NON_LETTER_KEEP_SPACE = re.compile(r"[^a-z\s]")
+ZERO_WIDTH = re.compile(r"[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u2800\u3000\ufeff]")
 REPEATED_LETTER = re.compile(r"(.)\1{2,}")
 WHITESPACE = re.compile(r"\s+")
 
+# Characters commonly used to visually separate letters without adding a
+# normal space. They are removed before matching so e.g. f\u200b.u\200b.c\u200b.k
+# is treated like "fuck".
+INVISIBLE_CHARS = set("\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b\u180c\u180d\u180e\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2061\u2062\u2063\u2064\u2066\u2067\u2068\u2069\u206a\u206b\u206c\u206d\u206e\u206f\u2800\ufeff")
+
+# How many extra alphabetic characters a filtered word may contain while
+# still being considered an obfuscated form. This catches forms such as
+# "badxx", "xxbad", and "baxd" without treating every long word containing
+# a short blocked word as a match.
+MAX_INSERTED_LETTERS = 2
+
 
 def _clean(text: str, keep_stars: bool = False) -> str:
-    """Shared normalization: unpacks 'fancy font' Unicode styling, strips
-    accents, maps homoglyphs and leetspeak back to plain letters, and
-    collapses stretched-out repeated letters. Keeps spaces (and optionally
-    asterisks) so word boundaries aren't lost."""
+    """Aggressive Unicode/obfuscation normalization used by the filter."""
+    text = ZERO_WIDTH.sub("", text)
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = text.lower().translate(HOMOGLYPH_MAP).translate(LEET_MAP)
@@ -52,56 +62,145 @@ def _clean(text: str, keep_stars: bool = False) -> str:
     return WHITESPACE.sub(" ", text).strip()
 
 
+def _compact(text: str) -> str:
+    """Return only normalized ASCII letters."""
+    return NON_LETTER.sub("", _clean(text)).lower()
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    """Whether needle appears in order inside haystack."""
+    if not needle:
+        return False
+    i = 0
+    for ch in haystack:
+        if i < len(needle) and ch == needle[i]:
+            i += 1
+            if i == len(needle):
+                return True
+    return False
+
+
+def _within_insert_tolerance(token: str, word: str) -> bool:
+    """Catch a filtered word with a small number of inserted letters.
+
+    This is intentionally length-bounded to reduce false positives. It does
+    not use a broad fuzzy ratio because that would make short words match
+    unrelated normal words too easily.
+    """
+    if not token or not word:
+        return False
+    if len(token) <= len(word) or len(token) > len(word) + MAX_INSERTED_LETTERS:
+        return False
+    return _is_subsequence(word, token)
+
+
+def _token_variants(text: str) -> list[str]:
+    """Build normalized token forms, including punctuation/space-obfuscated runs."""
+    clean = _clean(text, keep_stars=True)
+    variants = []
+    for token in clean.split():
+        compact = _compact(token.replace("*", ""))
+        if compact:
+            variants.append(compact)
+
+    # Joining short tokens catches "b a d" and "b.a.d" style spacing.
+    parts = [p for p in clean.split() if p]
+    run = ""
+    for part in parts:
+        c = _compact(part.replace("*", ""))
+        if len(c) == 1:
+            run += c
+        else:
+            if run:
+                variants.append(run)
+            run = ""
+    if run:
+        variants.append(run)
+    return variants
+
+
 def _wildcard_match(token: str, word: str) -> bool:
-    """True if `token` (which may contain * as a single-character
-    placeholder, e.g. from 'n*gger') matches `word` exactly."""
+    """Match '*' as an arbitrary single-character placeholder."""
+    token = _compact(token.replace("*", "")) if "*" not in token else token
     if len(token) != len(word) or "*" not in token:
         return False
     return all(tc == "*" or tc == wc for tc, wc in zip(token, word))
 
 
-def find_filter_match(content: str, filter_words: list[str]) -> str | None:
-    """Returns the matched filter word if `content` contains it — or a
-    spacing, leetspeak, font, homoglyph, repeated-letter, or asterisk-
-    placeholder bypass of it — else None. Uses word-boundary-aware matching
-    so a short filtered word can't false-positive inside an unrelated
-    longer word (e.g. filtering 'ass' won't flag 'class' or 'assignment')."""
-    text = _clean(content, keep_stars=True)
-    tokens = text.split(" ") if text else []
+def _punctuation_insensitive_forms(content: str) -> list[str]:
+    """Return compact chunks formed by removing separators/punctuation."""
+    normalized = _clean(content, keep_stars=True)
+    # Keep each whitespace-separated token and also the entire message with
+    # separators removed. The latter catches f.u.c.k and f-u-c-k.
+    forms = [normalized]
+    forms.extend(normalized.split())
+    forms.append(_compact(normalized))
+    return [f for f in forms if f]
 
-    # Runs of consecutive single-character tokens — catches "n i g g e r"
-    # style letter-by-letter spacing without merging real multi-letter words.
-    joined_runs = []
-    current = ""
-    for t in tokens:
-        if len(t) == 1:
-            current += t
-        else:
-            if current:
-                joined_runs.append(current)
-            current = ""
-    if current:
-        joined_runs.append(current)
+
+def find_filter_match(content: str, filter_words: list[str]) -> str | None:
+    """Aggressive blocked-word matching with layered anti-bypass checks.
+
+    Handles case changes, Unicode normalization, accents, homoglyphs,
+    leetspeak, zero-width characters, punctuation, whitespace/letter spacing,
+    repeated letters, '*' obfuscation, and up to MAX_INSERTED_LETTERS extra
+    letters around/inside a blocked term when the resulting token is only a
+    little longer than the blocked term.
+
+    No text filter can literally guarantee detection of every bypass. This
+    deliberately favors catching common obfuscations while keeping length
+    limits so short words do not trigger on ordinary long words.
+    """
+    if not content or not filter_words:
+        return None
+
+    text = _clean(content, keep_stars=True)
+    compact_message = _compact(content)
+    tokens = _token_variants(content)
+    forms = _punctuation_insensitive_forms(content)
 
     for raw_word in filter_words:
         word = _clean(raw_word)
         if not word:
             continue
-        compact_word = word.replace(" ", "")
 
-        # 1. Direct match with word boundaries — single words and phrases alike.
+        compact_word = _compact(word)
+        if not compact_word:
+            continue
+
+        # 1) Normal word/phrase matching after normalization.
+        # Remove stars here because asterisks are often inserted as separators.
         text_no_star = text.replace("*", "")
         if re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text_no_star):
             return raw_word
 
-        # 2. Letter-by-letter spacing bypass ("n i g g e r").
-        if any(compact_word in run for run in joined_runs):
+        # 2) Punctuation / whitespace / zero-width bypasses.
+        if compact_word in compact_message:
             return raw_word
 
-        # 3. Asterisk/placeholder wildcard bypass ("n*gger", "f*g").
-        for token in tokens:
-            if _wildcard_match(token, compact_word):
+        # 3) '*' wildcard forms, including asterisks between letters.
+        for token in text.split():
+            if "*" in token and _wildcard_match(token, compact_word):
                 return raw_word
+
+        # 4) Letter-by-letter spacing and punctuation splitting.
+        for form in forms:
+            if compact_word in _compact(form):
+                return raw_word
+
+        # 5) Small insertion tolerance. Catches intentional extra letters
+        # such as "wordx", "xword", and "woXrd" while remaining bounded.
+        # For very short terms, only one inserted character is allowed.
+        allowed = 1 if len(compact_word) <= 3 else MAX_INSERTED_LETTERS
+        for token in tokens:
+            if len(token) <= len(compact_word) + allowed and len(token) > len(compact_word):
+                if _is_subsequence(compact_word, token):
+                    return raw_word
+
+        # 6) Consecutive repeated-character bypass after normalization.
+        squashed = REPEATED_LETTER.sub(r"\1", compact_message)
+        if compact_word in squashed:
+            return raw_word
 
     return None
 
