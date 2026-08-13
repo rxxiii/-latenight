@@ -1,5 +1,6 @@
 import os
 import time
+import io
 from collections import defaultdict, deque
 
 import discord
@@ -9,6 +10,8 @@ from discord.ext import commands
 from database import db
 
 MAX_SNIPES_PER_CHANNEL = 20
+MAX_CACHED_ATTACHMENT_BYTES = 8 * 1024 * 1024
+MAX_TOTAL_CACHED_ATTACHMENT_BYTES = 32 * 1024 * 1024
 
 
 class Snipe(commands.Cog):
@@ -27,12 +30,63 @@ class Snipe(commands.Cog):
     async def on_message_delete(self, message: discord.Message):
         if message.guild is None:
             return
+
+        attachments = []
+
+        # Cache the attachment bytes while Discord's attachment URL is still
+        # usable. This is much more reliable than only saving a CDN URL:
+        # deleted-message attachment URLs can eventually stop working.
+        for attachment in message.attachments:
+            item = {
+                "url": attachment.url,
+                "filename": attachment.filename,
+                "content_type": attachment.content_type or "",
+                "data": None,
+            }
+
+            # Only cache reasonably-sized files in RAM. Images are the main
+            # target here; large videos/files remain represented by their URL.
+            if attachment.size <= MAX_CACHED_ATTACHMENT_BYTES:
+                try:
+                    data = await attachment.read(use_cached=False)
+                    if len(data) <= MAX_CACHED_ATTACHMENT_BYTES:
+                        item["data"] = data
+                except (discord.HTTPException, discord.NotFound, discord.Forbidden):
+                    pass
+
+            attachments.append(item)
+
         self.deleted_messages[message.channel.id].appendleft({
             "author": message.author,
             "content": message.content,
-            "attachments": [a.url for a in message.attachments],
+            "attachments": attachments,
             "deleted_at": time.time(),
         })
+
+        # Keep memory bounded across all channels.
+        total = 0
+        for history in self.deleted_messages.values():
+            for entry in history:
+                for attachment in entry.get("attachments", []):
+                    data = attachment.get("data")
+                    if data:
+                        total += len(data)
+
+        if total > MAX_TOTAL_CACHED_ATTACHMENT_BYTES:
+            for history in self.deleted_messages.values():
+                for entry in reversed(history):
+                    for attachment in entry.get("attachments", []):
+                        if attachment.get("data"):
+                            attachment["data"] = None
+                            total -= 1
+                            # We only need to aggressively trim until the
+                            # cache is safely under the configured limit.
+                            if total <= MAX_TOTAL_CACHED_ATTACHMENT_BYTES // 2:
+                                break
+                    if total <= MAX_TOTAL_CACHED_ATTACHMENT_BYTES // 2:
+                        break
+                if total <= MAX_TOTAL_CACHED_ATTACHMENT_BYTES // 2:
+                    break
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
@@ -59,11 +113,56 @@ class Snipe(commands.Cog):
             color=discord.Color.blurple(),
             timestamp=discord.utils.utcnow().fromtimestamp(entry["deleted_at"]),
         )
-        embed.set_author(name=str(entry["author"]), icon_url=entry["author"].display_avatar.url)
-        if entry["attachments"]:
-            embed.set_image(url=entry["attachments"][0])
+        embed.set_author(
+            name=str(entry["author"]),
+            icon_url=entry["author"].display_avatar.url
+        )
+
+        attachments = entry.get("attachments", [])
+
+        # Discord embeds cannot directly display a Python bytes object.
+        # Re-upload the cached image with the snipe message instead. This
+        # means ,s still shows the actual image after the original message
+        # has been deleted.
+        files = []
+        image_attachment = None
+
+        for i, attachment in enumerate(attachments):
+            data = attachment.get("data")
+            content_type = (attachment.get("content_type") or "").lower()
+            filename = attachment.get("filename") or f"attachment_{i}"
+
+            if data and content_type.startswith("image/"):
+                safe_name = filename.replace("/", "_").replace("\\", "_")
+                files.append(
+                    discord.File(
+                        io.BytesIO(data),
+                        filename=safe_name
+                    )
+                )
+                if image_attachment is None:
+                    image_attachment = safe_name
+
+        if image_attachment:
+            embed.set_image(url=f"attachment://{image_attachment}")
+        elif attachments:
+            # If the attachment could not be cached, keep the original URL
+            # as a fallback. It may still be valid.
+            first_url = attachments[0].get("url")
+            if first_url:
+                embed.set_image(url=first_url)
+
+        if attachments:
+            extra = len(attachments) - len(files)
+            if extra > 0:
+                embed.add_field(
+                    name="Attachments",
+                    value=f"{len(attachments)} attachment(s)",
+                    inline=True
+                )
+
         embed.set_footer(text=f"{index}/{len(history)} deleted messages")
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, files=files)
 
     @commands.command(name="rs", description="Show the most recently removed reaction in this channel.")
     @app_commands.describe(index="How far back to look (1 = most recent, default 1)")
