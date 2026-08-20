@@ -2,6 +2,8 @@ import asyncio
 import os
 import re
 import time
+import shutil
+from collections import OrderedDict
 
 import aiohttp
 import discord
@@ -23,7 +25,26 @@ YDL_OPTS = {
     "default_search": "ytsearch1",
     "nocheckcertificate": True,
     "ignoreerrors": True,
+    "retries": 1,
+    "fragment_retries": 1,
+    "extractor_retries": 1,
+    # Prefer clients that are generally usable for server-side playback.
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"],
+        }
+    },
 }
+
+# yt-dlp now recommends a supported JavaScript runtime for YouTube extraction.
+# Only enable Deno when it is actually installed on the host.
+_DENO_PATHS = [
+    shutil.which("deno"),
+    os.path.expanduser("~/.deno/bin/deno"),
+]
+_DENO_PATH = next((path for path in _DENO_PATHS if path and os.path.exists(path)), None)
+if _DENO_PATH:
+    YDL_OPTS["js_runtimes"] = {"deno": {"path": _DENO_PATH}}
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
@@ -117,6 +138,16 @@ class Music(commands.Cog):
         self.session: aiohttp.ClientSession | None = None
         self._spotify_token = None
         self._spotify_token_expires = 0
+
+        # YouTube extraction is deliberately throttled. A single shared lock
+        # prevents multiple guilds from hammering YouTube at the same time.
+        self._youtube_lock = asyncio.Lock()
+        self._youtube_last_request = 0.0
+        self._youtube_min_interval = 2.0
+        self._youtube_cache: OrderedDict[str, tuple[float, Track]] = OrderedDict()
+        self._youtube_cache_ttl = 300.0
+        self._youtube_cache_max = 100
+        self._youtube_backoff_until = 0.0
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession()
@@ -222,26 +253,93 @@ class Music(commands.Cog):
     # ---------- youtube ----------
 
     async def _search_youtube(self, query: str):
-        loop = asyncio.get_event_loop()
+        """Resolve a YouTube query without hammering YouTube.
+
+        The cache avoids repeating the same extraction, while the shared lock
+        and minimum interval serialize requests across all guilds. If YouTube
+        returns a rate-limit response, we back off instead of immediately
+        retrying over and over.
+        """
+        now = time.monotonic()
+        cached = self._youtube_cache.get(query)
+        if cached:
+            cached_at, track = cached
+            if now - cached_at < self._youtube_cache_ttl:
+                self._youtube_cache.move_to_end(query)
+                return Track(track.title, track.url, track.stream_url, None)
+            self._youtube_cache.pop(query, None)
+
+        async with self._youtube_lock:
+            now = time.monotonic()
+            if now < self._youtube_backoff_until:
+                wait = self._youtube_backoff_until - now
+                raise RuntimeError(
+                    f"YouTube is temporarily rate-limiting the bot. Try again in about {max(1, int(wait))} seconds."
+                )
+
+            delay = self._youtube_min_interval - (now - self._youtube_last_request)
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            self._youtube_last_request = time.monotonic()
+            loop = asyncio.get_running_loop()
+
+            def extract():
+                with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+                    return ydl.extract_info(query, download=False)
+
+            try:
+                info = await loop.run_in_executor(None, extract)
+            except Exception as exc:
+                text = str(exc).lower()
+                if "429" in text or "too many requests" in text or "rate limit" in text:
+                    # Back off for 60 seconds. Do not automatically retry.
+                    self._youtube_backoff_until = time.monotonic() + 60
+                    raise RuntimeError(
+                        "YouTube is rate-limiting the bot right now. Please wait about a minute before trying again."
+                    ) from exc
+                raise
+
+            if info is None:
+                return None
+            if "entries" in info:
+                info = next((entry for entry in info["entries"] if entry), None)
+            if not info or not info.get("url"):
+                return None
+
+            track = Track(
+                title=info.get("title", query),
+                url=info.get("webpage_url") or info.get("original_url") or "",
+                # Do not retain the direct googlevideo URL. It can expire or
+                # return 403 when reused later. Playback refreshes it.
+                stream_url="",
+                requester=None,
+            )
+            self._youtube_cache[query] = (time.monotonic(), track)
+            self._youtube_cache.move_to_end(query)
+            while len(self._youtube_cache) > self._youtube_cache_max:
+                self._youtube_cache.popitem(last=False)
+            return Track(track.title, track.url, "", None)
+
+    async def _refresh_stream_url(self, track: "Track") -> str:
+        """Get a fresh media URL immediately before FFmpeg starts.
+
+        YouTube's googlevideo URLs are temporary, so storing one in the queue
+        is unreliable and can produce HTTP 403 errors when playback starts later.
+        """
+        target = track.url or track.title
+        loop = asyncio.get_running_loop()
 
         def extract():
             with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-                info = ydl.extract_info(query, download=False)
-                if info is None:
-                    return None
-                if "entries" in info:
-                    info = info["entries"][0] if info["entries"] else None
-                return info
+                return ydl.extract_info(target, download=False)
 
         info = await loop.run_in_executor(None, extract)
-        if info is None:
-            return None
-        return Track(
-            title=info.get("title", query),
-            url=info.get("webpage_url", ""),
-            stream_url=info["url"],
-            requester=None,
-        )
+        if info and "entries" in info:
+            info = next((entry for entry in info["entries"] if entry), None)
+        if not info or not info.get("url"):
+            raise RuntimeError("YouTube did not return a playable audio stream.")
+        return info["url"]
 
     # ---------- playback ----------
 
@@ -259,12 +357,30 @@ class Music(commands.Cog):
             return
 
         state.current = next_track
-        await self._start_playing(guild, next_track, seek=0.0)
+        try:
+            await self._start_playing(guild, next_track, seek=0.0)
+        except Exception as exc:
+            state.current = None
+            if guild.system_channel:
+                try:
+                    await guild.system_channel.send(f"⚠️ Couldn't start **{next_track.title}**: `{exc}`")
+                except Exception:
+                    pass
+            # Continue to the next queued item rather than leaving the player stuck.
+            if state.queue:
+                await self._play_next(guild)
 
     async def _start_playing(self, guild: discord.Guild, track: "Track", seek: float = 0.0):
         state = self.get_state(guild.id)
         if state.voice_client is None or not state.voice_client.is_connected():
             return
+
+        try:
+            stream_url = await self._refresh_stream_url(track)
+        except Exception as exc:
+            # If a stale direct URL ever exists on a queued Track, do not pass
+            # it to FFmpeg. Surface the extraction error instead.
+            raise RuntimeError(f"Could not refresh YouTube audio: {exc}") from exc
 
         before_options = FFMPEG_OPTIONS["before_options"]
         if seek > 0:
@@ -275,7 +391,7 @@ class Music(commands.Cog):
             options += f' -af "{state.eq_filter}"'
 
         source = discord.PCMVolumeTransformer(
-            discord.FFmpegPCMAudio(track.stream_url, before_options=before_options, options=options),
+            discord.FFmpegPCMAudio(stream_url, before_options=before_options, options=options),
             volume=state.volume,
         )
         state.audio_source = source
@@ -339,12 +455,22 @@ class Music(commands.Cog):
             queries = [query]
 
         added = []
-        for q in queries:
-            track = await self._search_youtube(q)
-            if track:
-                track.requester = ctx.author
-                state.queue.append(track)
-                added.append(track)
+        try:
+            for q in queries:
+                track = await self._search_youtube(q)
+                if track:
+                    track.requester = ctx.author
+                    state.queue.append(track)
+                    added.append(track)
+        except RuntimeError as exc:
+            if added:
+                await ctx.send(f"Queued {len(added)} track(s), but YouTube is temporarily rate-limiting further searches. {exc}")
+            else:
+                await ctx.send(str(exc))
+            return
+        except Exception:
+            await ctx.send("YouTube search failed. Please try again later.")
+            return
 
         if not added:
             return await ctx.send("Couldn't find anything to play for that.")
@@ -357,7 +483,7 @@ class Music(commands.Cog):
         if not state.voice_client.is_playing() and state.current is None:
             await self._play_next(ctx.guild)
 
-    @commands.command(name="skip", aliases=["next", "sk"], description="Skip to the next track.")
+    @commands.hybrid_command(name="skip", aliases=["next", "sk"], description="Skip to the next track.")
     async def skip(self, ctx: commands.Context):
         state = self.get_state(ctx.guild.id)
         if state.voice_client and state.voice_client.is_playing():
