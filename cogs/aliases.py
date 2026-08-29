@@ -1,5 +1,4 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from database import db
@@ -12,13 +11,12 @@ class Aliases(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_group(name="alias", invoke_without_command=True)
+    @commands.group(name="alias", invoke_without_command=True)
     @commands.has_permissions(manage_guild=True)
     async def alias(self, ctx: commands.Context):
         await ctx.invoke(self.alias_list)
 
     @alias.command(name="add")
-    @app_commands.describe(alias_name="The new alias word", command="The existing command it should run, e.g. ban")
     async def alias_add(self, ctx: commands.Context, alias_name: str, *, command: str):
         real_command = self.bot.get_command(command.split()[0])
         if real_command is None:
@@ -27,13 +25,11 @@ class Aliases(commands.Cog):
         await ctx.send(f"Alias `{alias_name}` now runs `{command}`.")
 
     @alias.command(name="remove")
-    @app_commands.describe(alias_name="The alias to remove")
     async def alias_remove(self, ctx: commands.Context, alias_name: str):
         await db.remove_alias(ctx.guild.id, alias_name)
         await ctx.send(f"Alias `{alias_name}` removed.")
 
     @alias.command(name="view")
-    @app_commands.describe(alias_name="The alias to look up")
     async def alias_view(self, ctx: commands.Context, alias_name: str):
         mapped = await db.get_alias(ctx.guild.id, alias_name)
         if mapped is None:
