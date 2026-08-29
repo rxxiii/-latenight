@@ -2,6 +2,9 @@ import datetime
 import re
 import time
 import unicodedata
+import base64
+import asyncio
+import aiohttp
 from collections import defaultdict, deque
 
 import discord
@@ -222,6 +225,14 @@ SPAM_WARNING_REASON = "Spam (5 messages within 5 seconds)"
 INVITE_TIMEOUT_MINUTES = 5
 WORD_TIMEOUT_MINUTES = 5
 
+# Optional image OCR. Set GEMINI_API_KEY in the deployment environment to
+# enable checking text embedded inside uploaded images/GIFs.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MAX_IMAGE_BYTES = 19 * 1024 * 1024
+IMAGE_OCR_TIMEOUT = 12
+
+
 
 class Filter(commands.Cog):
     """Word filter, invite link filter, and multi-layer spam detection.
@@ -398,6 +409,137 @@ class Filter(commands.Cog):
         self.message_times.pop(key, None)
         self.recent_contents.pop(key, None)
 
+    async def _ocr_attachment(self, attachment: discord.Attachment) -> str:
+        """Extract visible text from an image using Gemini vision.
+
+        OCR is optional: if GEMINI_API_KEY is not configured, the normal text
+        filter continues to work without making an external request.
+        """
+        if not GEMINI_API_KEY:
+            return ""
+
+        content_type = (attachment.content_type or "").lower()
+        filename = attachment.filename.lower()
+
+        image_types = {
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/webp",
+            "image/gif",
+        }
+        if content_type not in image_types and not filename.endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif")
+        ):
+            return ""
+
+        if attachment.size > MAX_IMAGE_BYTES:
+            return ""
+
+        try:
+            image_bytes = await attachment.read()
+            if not image_bytes:
+                return ""
+
+            mime = content_type if content_type in image_types else "image/jpeg"
+
+            prompt = (
+                "Analyze this uploaded image for server content moderation. "
+                "First read any clearly visible text, then classify the visual "
+                "content. Return ONLY one line in this exact format: "
+                "CATEGORY=<NONE|NUDITY|SEXUAL|GORE|BLOOD|GRAPHIC_VIOLENCE|OTHER_BLOCKED>; "
+                "TEXT=<visible text>. "
+                "Use NUDITY for exposed genitals/nudity, SEXUAL for explicit sexual "
+                "acts or pornographic imagery, GORE for graphic injury/body trauma, "
+                "BLOOD for prominent blood, and GRAPHIC_VIOLENCE for graphic violent "
+                "imagery. Use NONE when none of these are present. Do not infer or "
+                "guess; only classify what is visibly present. If there is no readable "
+                "text, use an empty TEXT value."
+            )
+
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": mime,
+                                "data": base64.b64encode(image_bytes).decode("ascii"),
+                            }
+                        },
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0,
+                    "maxOutputTokens": 1024,
+                },
+            }
+
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{urllib.parse.quote(GEMINI_MODEL, safe='')}:generateContent"
+                f"?key={urllib.parse.quote(GEMINI_API_KEY, safe='')}"
+            )
+
+            timeout = aiohttp.ClientTimeout(total=IMAGE_OCR_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status >= 400:
+                        return ""
+
+                    data = await response.json(content_type=None)
+
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return ""
+
+            parts = (
+                candidates[0]
+                .get("content", {})
+                .get("parts", [])
+            )
+
+            result = " ".join(
+                str(part.get("text", ""))
+                for part in parts
+                if isinstance(part, dict) and part.get("text")
+            ).strip()
+            return result
+
+        except (aiohttp.ClientError, asyncio.TimeoutError, discord.HTTPException):
+            return ""
+        except Exception:
+            return ""
+
+    async def _check_image_attachments(
+        self, message: discord.Message, filter_words: list[str]
+    ) -> str | None:
+        """OCR image attachments and run the exact same bypass-resistant
+        blocked-word matcher against the extracted text."""
+        if not filter_words or not message.attachments or not GEMINI_API_KEY:
+            return None
+
+        blocked_categories = {
+            "NUDITY", "SEXUAL", "GORE", "BLOOD", "GRAPHIC_VIOLENCE", "OTHER_BLOCKED"
+        }
+
+        for attachment in message.attachments:
+            extracted = await self._ocr_attachment(attachment)
+            if not extracted:
+                continue
+
+            category_match = re.search(r"CATEGORY\s*=\s*([A-Z_]+)", extracted, re.IGNORECASE)
+            if category_match and category_match.group(1).upper() in blocked_categories:
+                return category_match.group(1).upper()
+
+            text_match = re.search(r"TEXT\s*=\s*(.*)$", extracted, re.IGNORECASE | re.DOTALL)
+            visible_text = text_match.group(1).strip() if text_match else extracted
+            matched = find_filter_match(visible_text, filter_words)
+            if matched:
+                return matched
+
+        return None
+
     async def _check_message(self, message: discord.Message) -> bool:
         """Runs the word-filter and invite-filter checks on a message
         (used for new messages, edited messages, and ,filter scan).
@@ -406,18 +548,26 @@ class Filter(commands.Cog):
             return False
         if isinstance(message.author, discord.Member) and message.author.guild_permissions.manage_messages:
             return False  # don't filter staff
-        if not message.content:
-            return False
-
+        # Image-only messages have no message.content, so do not return early.
+        # We still need to inspect their attachments for OCR.
         config = await db.get_filter_config(message.guild.id)
 
         words = await db.get_global_filter_words()
-        matched = find_filter_match(message.content, words) if words else None
+
+        # Check normal text first.
+        matched = find_filter_match(message.content, words) if message.content and words else None
         if matched:
             await self._punish(message, "a blocked word", WORD_TIMEOUT_MINUTES)
             return True
 
-        if config["invites"]:
+        # Then inspect image attachments. This catches blocked words rendered
+        # inside screenshots, memes, photos, GIFs, etc. when OCR can read them.
+        image_match = await self._check_image_attachments(message, words)
+        if image_match:
+            await self._punish(message, "a blocked word in an image", WORD_TIMEOUT_MINUTES)
+            return True
+
+        if config["invites"] and message.content:
             stripped = WHITESPACE.sub("", message.content)
             if INVITE_PATTERN.search(stripped):
                 await self._punish(message, "posting an invite link", INVITE_TIMEOUT_MINUTES)
