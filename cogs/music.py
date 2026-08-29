@@ -25,26 +25,17 @@ YDL_OPTS = {
     "default_search": "ytsearch1",
     "nocheckcertificate": True,
     "ignoreerrors": True,
+    # Keep retries low so a 429 does not turn into a request storm.
     "retries": 1,
     "fragment_retries": 1,
     "extractor_retries": 1,
-    # Prefer clients that are generally usable for server-side playback.
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web"],
-        }
-    },
 }
 
-# yt-dlp now recommends a supported JavaScript runtime for YouTube extraction.
-# Only enable Deno when it is actually installed on the host.
-_DENO_PATHS = [
-    shutil.which("deno"),
-    os.path.expanduser("~/.deno/bin/deno"),
-]
-_DENO_PATH = next((path for path in _DENO_PATHS if path and os.path.exists(path)), None)
-if _DENO_PATH:
-    YDL_OPTS["js_runtimes"] = {"deno": {"path": _DENO_PATH}}
+# Use Deno when it is installed in the container. yt-dlp can use it for
+# YouTube's current JavaScript-dependent extraction paths.
+_deno = next((p for p in (shutil.which("deno"), "/root/.deno/bin/deno", os.path.expanduser("~/.deno/bin/deno")) if p and os.path.exists(p)), None)
+if _deno:
+    YDL_OPTS["js_runtimes"] = {"deno": {"path": _deno}}
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
@@ -266,7 +257,7 @@ class Music(commands.Cog):
             cached_at, track = cached
             if now - cached_at < self._youtube_cache_ttl:
                 self._youtube_cache.move_to_end(query)
-                return Track(track.title, track.url, track.stream_url, None)
+                return Track(track.title, track.url, "", None)
             self._youtube_cache.pop(query, None)
 
         async with self._youtube_lock:
@@ -309,9 +300,7 @@ class Music(commands.Cog):
 
             track = Track(
                 title=info.get("title", query),
-                url=info.get("webpage_url") or info.get("original_url") or "",
-                # Do not retain the direct googlevideo URL. It can expire or
-                # return 403 when reused later. Playback refreshes it.
+                url=info.get("webpage_url", ""),
                 stream_url="",
                 requester=None,
             )
@@ -322,11 +311,7 @@ class Music(commands.Cog):
             return Track(track.title, track.url, "", None)
 
     async def _refresh_stream_url(self, track: "Track") -> str:
-        """Get a fresh media URL immediately before FFmpeg starts.
-
-        YouTube's googlevideo URLs are temporary, so storing one in the queue
-        is unreliable and can produce HTTP 403 errors when playback starts later.
-        """
+        """Extract a fresh YouTube media URL immediately before playback."""
         target = track.url or track.title
         loop = asyncio.get_running_loop()
 
@@ -357,36 +342,20 @@ class Music(commands.Cog):
             return
 
         state.current = next_track
-        try:
-            await self._start_playing(guild, next_track, seek=0.0)
-        except Exception as exc:
-            state.current = None
-            if guild.system_channel:
-                try:
-                    await guild.system_channel.send(f"⚠️ Couldn't start **{next_track.title}**: `{exc}`")
-                except Exception:
-                    pass
-            # Continue to the next queued item rather than leaving the player stuck.
-            if state.queue:
-                await self._play_next(guild)
+        await self._start_playing(guild, next_track, seek=0.0)
 
     async def _start_playing(self, guild: discord.Guild, track: "Track", seek: float = 0.0):
         state = self.get_state(guild.id)
         if state.voice_client is None or not state.voice_client.is_connected():
             return
 
-        try:
-            stream_url = await self._refresh_stream_url(track)
-        except Exception as exc:
-            # If a stale direct URL ever exists on a queued Track, do not pass
-            # it to FFmpeg. Surface the extraction error instead.
-            raise RuntimeError(f"Could not refresh YouTube audio: {exc}") from exc
+        stream_url = await self._refresh_stream_url(track)
 
         before_options = FFMPEG_OPTIONS["before_options"]
         if seek > 0:
             before_options = f"-ss {seek:.2f} " + before_options
 
-        options = "-vn -ar 48000 -ac 2 -b:a 192k"
+        options = "-vn -b:a 192k"
         if state.eq_filter:
             options += f' -af "{state.eq_filter}"'
 

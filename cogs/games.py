@@ -76,6 +76,7 @@ class BlackTeaGame:
         self.players: list[discord.Member] = []
         self.lives: dict[int, int] = {}
         self.used_words: set[str] = set()
+        self.invalid_groups: set[str] = set()  # groups that are words themselves
 
     def add_player(self, member: discord.Member):
         if member.id not in self.lives:
@@ -95,6 +96,25 @@ class BlackTeaGame:
         except Exception:
             return True  # if the dictionary API is having issues, don't punish the player for it
 
+    async def choose_group(self) -> str:
+        """Pick a 3-letter sequence that is not itself a valid English word.
+
+        This prevents prompts such as `art`, where answering `art` would
+        satisfy the challenge without actually extending the sequence.
+        """
+        candidates = TRIGRAMS.copy()
+        random.shuffle(candidates)
+        for group in candidates:
+            group = group.lower()
+            if group in self.invalid_groups:
+                continue
+            if await self.is_real_word(group):
+                self.invalid_groups.add(group)
+                continue
+            return group
+        # Fallback: use a non-word-looking sequence from the pool.
+        return random.choice([g for g in TRIGRAMS if g not in self.invalid_groups])
+
     async def run(self, bot: commands.Bot):
         order = self.alive_players()
         random.shuffle(order)
@@ -106,7 +126,7 @@ class BlackTeaGame:
             player = order[idx % len(order)]
             idx += 1
 
-            group = random.choice(TRIGRAMS)
+            group = await self.choose_group()
             await self.channel.send(f"🍵 **{group}** — {player.mention}, you have 10 seconds!")
 
             def check(m, group=group, player=player):
@@ -117,7 +137,7 @@ class BlackTeaGame:
                     and group in content
                     and content not in self.used_words
                     and content.isalpha()
-                    and len(content) >= 3
+                    and len(content) > len(group)
                 )
 
             failed_turn = False
