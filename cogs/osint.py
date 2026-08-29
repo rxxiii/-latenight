@@ -24,7 +24,7 @@ domain/IP) won't have.
 import asyncio
 import ipaddress
 import json
-import html
+import html as html_lib
 import re
 import socket
 from urllib.parse import urlparse
@@ -337,14 +337,38 @@ class OSINT(commands.Cog):
             for pattern in patterns:
                 match = re.search(pattern, html, re.IGNORECASE)
                 if match:
-                    return html.unescape(match.group(1))
+                    return html_lib.unescape(match.group(1))
             return None
 
-        description = meta("og:description")
+        description = meta("og:description") or ""
         image_url = meta("og:image")
         title_text = meta("og:title") or f"@{username}"
-        if not description:
-            return await ctx.send("Couldn't read that profile — it may be private, or Instagram changed its page layout.")
+
+        # Instagram may return a valid profile HTML page without OpenGraph
+        # description data (common when the request comes from a datacenter).
+        # Do not incorrectly call it private or a layout failure. Try JSON-LD
+        # for the display name/avatar, then return a usable profile card with
+        # Unknown stats if Instagram has hidden the counters.
+        try:
+            for match in re.finditer(
+                r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                obj = json.loads(match.group(1))
+                objects = obj if isinstance(obj, list) else [obj]
+                for item in objects:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("name") and title_text == f"@{username}":
+                        title_text = str(item["name"])
+                    image = item.get("image")
+                    if isinstance(image, str) and not image_url:
+                        image_url = image
+                    elif isinstance(image, dict) and not image_url:
+                        image_url = image.get("url")
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
 
         # Instagram has used both "Followers, Following, Posts" and other
         # orderings in its metadata, so parse each stat independently.

@@ -1,8 +1,8 @@
 import asyncio
+import base64
 import os
 import re
 import time
-import shutil
 from collections import OrderedDict
 
 import aiohttp
@@ -24,18 +24,26 @@ YDL_OPTS = {
     "quiet": True,
     "default_search": "ytsearch1",
     "nocheckcertificate": True,
-    "ignoreerrors": True,
-    # Keep retries low so a 429 does not turn into a request storm.
-    "retries": 1,
-    "fragment_retries": 1,
-    "extractor_retries": 1,
+    # Do not hide extraction errors: the caller needs to know when YouTube
+    # has returned LOGIN_REQUIRED / 429 instead of silently returning None.
+    "ignoreerrors": False,
+    "retries": 0,
+    "fragment_retries": 0,
+    "extractor_retries": 0,
 }
 
-# Use Deno when it is installed in the container. yt-dlp can use it for
-# YouTube's current JavaScript-dependent extraction paths.
-_deno = next((p for p in (shutil.which("deno"), "/root/.deno/bin/deno", os.path.expanduser("~/.deno/bin/deno")) if p and os.path.exists(p)), None)
-if _deno:
-    YDL_OPTS["js_runtimes"] = {"deno": {"path": _deno}}
+# Optional authenticated YouTube cookies. Never hard-code cookies in the source.
+# On Railway, set YOUTUBE_COOKIES_B64 to a base64-encoded Netscape cookies.txt file.
+_COOKIE_B64 = os.getenv("YOUTUBE_COOKIES_B64", "").strip()
+if _COOKIE_B64:
+    try:
+        _cookie_path = "/tmp/youtube_cookies.txt"
+        with open(_cookie_path, "wb") as _f:
+            _f.write(base64.b64decode(_COOKIE_B64, validate=True))
+        YDL_OPTS["cookiefile"] = _cookie_path
+    except Exception:
+        # Keep anonymous extraction available if the optional cookie secret is invalid.
+        pass
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
@@ -276,20 +284,26 @@ class Music(commands.Cog):
             loop = asyncio.get_running_loop()
 
             def extract():
+                target = query.strip()
+                if not re.match(r"https?://", target, re.I):
+                    target = f"ytsearch1:{target}"
                 with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-                    return ydl.extract_info(query, download=False)
+                    return ydl.extract_info(target, download=False)
 
             try:
                 info = await loop.run_in_executor(None, extract)
             except Exception as exc:
                 text = str(exc).lower()
                 if "429" in text or "too many requests" in text or "rate limit" in text:
-                    # Back off for 60 seconds. Do not automatically retry.
                     self._youtube_backoff_until = time.monotonic() + 60
                     raise RuntimeError(
                         "YouTube is rate-limiting the bot right now. Please wait about a minute before trying again."
                     ) from exc
-                raise
+                if "sign in to confirm" in text or "login_required" in text or "not a bot" in text:
+                    raise RuntimeError(
+                        "YouTube is requiring authentication for this server. Set YOUTUBE_COOKIES_B64 in Railway using your own YouTube cookies, then redeploy."
+                    ) from exc
+                raise RuntimeError(f"YouTube extraction failed: {str(exc)[:250]}") from exc
 
             if info is None:
                 return None
@@ -311,7 +325,6 @@ class Music(commands.Cog):
             return Track(track.title, track.url, "", None)
 
     async def _refresh_stream_url(self, track: "Track") -> str:
-        """Extract a fresh YouTube media URL immediately before playback."""
         target = track.url or track.title
         loop = asyncio.get_running_loop()
 
