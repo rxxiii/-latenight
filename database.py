@@ -428,20 +428,26 @@ class Database:
     # ---------- guild config ----------
 
     async def get_guild_config(self, guild_id: int) -> aiosqlite.Row:
+    cur = await self.conn.execute(
+        "SELECT * FROM guild_config WHERE guild_id = ?", (guild_id,)
+    )
+    row = await cur.fetchone()
+
+    if row is None:
+        # Safe if multiple tasks try to create the same guild at once.
+        # Does not modify or delete any existing data.
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)",
+            (guild_id,),
+        )
+        await self.conn.commit()
+
         cur = await self.conn.execute(
             "SELECT * FROM guild_config WHERE guild_id = ?", (guild_id,)
         )
         row = await cur.fetchone()
-        if row is None:
-            await self.conn.execute(
-                "INSERT INTO guild_config (guild_id) VALUES (?)", (guild_id,)
-            )
-            await self.conn.commit()
-            cur = await self.conn.execute(
-                "SELECT * FROM guild_config WHERE guild_id = ?", (guild_id,)
-            )
-            row = await cur.fetchone()
-        return row
+
+    return row
 
     async def set_guild_config(self, guild_id: int, **fields):
         await self.get_guild_config(guild_id)  # ensure row exists
@@ -753,7 +759,8 @@ class Database:
         row = await cur.fetchone()
         if row is None:
             await self.conn.execute(
-                "INSERT INTO antinuke_config (guild_id) VALUES (?)", (guild_id,)
+    "INSERT OR IGNORE INTO antinuke_config (guild_id) VALUES (?)", (guild_id,)
+)
             )
             await self.conn.commit()
             cur = await self.conn.execute(
@@ -808,7 +815,8 @@ class Database:
         row = await cur.fetchone()
         if row is None:
             await self.conn.execute(
-                "INSERT INTO antiraid_config (guild_id) VALUES (?)", (guild_id,)
+    "INSERT OR IGNORE INTO antiraid_config (guild_id) VALUES (?)", (guild_id,)
+)
             )
             await self.conn.commit()
             cur = await self.conn.execute(
@@ -863,7 +871,8 @@ class Database:
         row = await cur.fetchone()
         if row is None:
             await self.conn.execute(
-                "INSERT INTO filter_config (guild_id) VALUES (?)", (guild_id,)
+    "INSERT OR IGNORE INTO filter_config (guild_id) VALUES (?)", (guild_id,)
+)
             )
             await self.conn.commit()
             cur = await self.conn.execute(
